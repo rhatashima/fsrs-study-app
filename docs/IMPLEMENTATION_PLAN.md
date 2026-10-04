@@ -34,7 +34,7 @@
 ### Phase 0：要件整理と設計 ✅（このドキュメント）
 - 成果物：docs/*.md, CLAUDE.md
 
-### Phase 1：基本構成（branch: `feature/setup`）
+### Phase 1：基本構成（branch: `feature/setup`）✅
 - Vite + React + TypeScript のプロジェクト作成。
 - ESLint（レイヤー間 import 制限を含む）、Vitest、`typecheck` / `lint` / `test` / `build` の npm scripts。
 - `.gitignore`（`.env*`, `firestore.rules`（生成物）, `node_modules`, `dist`, Firebase のデバッグログなど）、`.env.example`。
@@ -66,7 +66,8 @@
 - **利用者の作業が必要**：Firestore データベース作成（ロケーション `asia-northeast1`）、自分の UID を `.env.local` の `OWNER_UID` に設定、Firebase CLI へのログイン。
 - `repositories/firestore/`（converter、zod 検証、batch 保存、`increment()` による集計、`count()` 集計）、`firestore.indexes.json`。
 - 保存状態表示（保存中 / 未保存 n 件 / 再試行）、`beforeunload` 警告。
-- `firestore.rules.template`, `scripts/build-rules.mjs`, `tests/rules/`（Owner のみ可、他ユーザー不可、未ログイン不可、ReviewLog 更新・削除不可）。
+- `firebase.json`（Hosting は全パスを `/index.html` に rewrite して URL 直接アクセスに対応）。
+- `firestore.rules.template`, `scripts/build-rules.mjs`, `tests/rules/`（ESLint の import 制限で `tests/rules/` に Firebase SDK を許可する設定を追加）（Owner のみ可、他ユーザー不可、未ログイン不可、ReviewLog 更新・削除不可）。
 - 初回デプロイ（Hosting + Rules）。**デプロイ前に利用者の確認を取る。**
 - 確認：PC とスマホで同じ履歴が見えること、リロードしても壊れないこと。
 - コミット例：`feat: add Firestore repositories`, `feat: add Firestore security rules`, `test: add security rules tests`

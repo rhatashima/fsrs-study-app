@@ -58,6 +58,7 @@ fsrs-study-app/
 │   ├─ castle-3-dummy.csv     ダミー教材（20問）
 │   └─ test-material.json
 ├─ tests/
+│   ├─ architecture/          import 制限（レイヤー境界）のテスト
 │   └─ rules/                 Security Rules テスト（Emulator 使用、別コマンド）
 └─ src/
     ├─ main.tsx
@@ -78,23 +79,27 @@ fsrs-study-app/
     │   ├─ types.ts           リポジトリ interface
     │   ├─ memory/            インメモリ実装（テスト・開発）
     │   └─ firestore/         Firestore 実装（converter, zod でのデータ検証）
-    └─ styles/                CSS（CSS 変数 + CSS Modules。UI ライブラリは使わない）
+    ├─ styles/                CSS（CSS 変数 + CSS Modules。UI ライブラリは使わない）
+    └─ test/                  テストの共通設定（setup.ts）
 ```
 
-## 3. 採用ライブラリ（バージョンは Phase 1 で実際に確認・固定）
+## 3. 採用ライブラリ
+
+正確なバージョンは `package.json` と `package-lock.json` を参照。
 
 | 用途 | ライブラリ | 理由 |
 |---|---|---|
-| ビルド | Vite | 要件 |
-| UI | React | 要件 |
-| ルーティング | react-router | 5画面 + リロード時に画面を維持するため URL が必要 |
+| ビルド | Vite 8 | 要件 |
+| UI | React 19 | 要件 |
+| 言語 | TypeScript 6.0 | typescript-eslint 8 の対応範囲が `<6.1` のため、TypeScript 7 ではなく 6.0 系に固定（`~6.0.x`）。typescript-eslint が対応したら更新を検討 |
+| ルーティング | React Router 8（Data Mode：`createBrowserRouter`） | 5画面 + リロード・URL 直接アクセス・戻る/進むに対応。`RouterProvider` は `react-router/dom` から import する。Firebase Hosting では全パスを `index.html` に rewrite する（Phase 5 の `firebase.json`） |
 | FSRS | ts-fsrs | 要件 |
 | 検証 | zod | インポート検証と Firestore 読み込みデータの検証（FSRS 状態破損検出）を同じ仕組みで行う |
 | CSV | papaparse | 引用符・改行入り CSV を正しく扱うため自前実装しない |
 | PWA | vite-plugin-pwa | manifest / Service Worker 生成 |
-| テスト | Vitest, @testing-library/react | Vite と統合 |
+| テスト | Vitest 5, jsdom, @testing-library/react, @testing-library/user-event | Vite と統合。設定は `vitest.config.ts` |
 | Rules テスト | @firebase/rules-unit-testing + Firestore Emulator | Java が必要なため `npm test` とは別コマンド |
-| Lint | ESLint (flat config) + typescript-eslint | — |
+| Lint | ESLint 10 (flat config) + typescript-eslint（型情報を使う推奨ルール） | `no-restricted-imports` でレイヤー間の import を制限。制限が働くことは `tests/architecture/import-boundaries.test.ts` で確認 |
 
 使わないもの：状態管理ライブラリ（Redux 等）、UI コンポーネントライブラリ、CSS フレームワーク、データ取得ライブラリ。React Context + hooks で足りる規模のため。
 

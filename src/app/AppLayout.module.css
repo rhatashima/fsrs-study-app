@@ -1,0 +1,17 @@
+.layout {
+  min-height: 100dvh;
+}
+
+.main {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-4);
+  /* 下部タブとホームインジケーターの分だけ余白を空ける */
+  padding-bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom) + var(--space-6));
+}
+
+@media (min-width: 48rem) {
+  .main {
+    padding: var(--space-6) var(--space-4);
+  }
+}

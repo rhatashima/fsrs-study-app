@@ -1,0 +1,51 @@
+/* スマートフォン：画面下部に固定（片手で届く位置） */
+.bar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 10;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.list {
+  display: flex;
+  margin: 0 auto;
+  padding: 0;
+  max-width: var(--content-max-width);
+  list-style: none;
+}
+
+.item {
+  flex: 1;
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tab-bar-height);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.active {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+/* PC・タブレット：上部のナビゲーションバー */
+@media (min-width: 48rem) {
+  .bar {
+    position: sticky;
+    inset: 0 0 auto 0;
+    border-top: none;
+    border-bottom: 1px solid var(--color-border);
+    padding-bottom: 0;
+  }
+
+  .link {
+    font-size: 0.9375rem;
+  }
+}

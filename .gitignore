@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build / test output
+dist/
+dist-ssr/
+coverage/
+*.tsbuildinfo
+
+# Environment variables (secrets) — only .env.example is committed
+.env
+.env.*
+!.env.example
+*.local
+
+# Firebase
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+database-debug.log*
+# Generated from firestore.rules.template with OWNER_UID (Phase 5)
+/firestore.rules
+# Service account keys and other credentials
+*-service-account*.json
+serviceAccount*.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.sw?
