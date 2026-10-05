@@ -42,10 +42,12 @@ npm run build
 - 依存方向：`pages/components/hooks → services → lib/fsrs, repositories(interface) → domain`。
 - **`ts-fsrs` を import してよいのは `src/lib/fsrs/` だけ。**
 - **`firebase/*` を import してよいのは `src/services/firebase/` と `src/repositories/firestore/` だけ。**
-- `domain/` と `services/` は React に依存しない純粋な TypeScript にする（ユニットテスト可能に保つ）。
+- `src/domain/` は同じディレクトリ内のファイル以外を import しない純粋な TypeScript にする（ts-fsrs・Firebase・React の型も使わない。日時は `Date`）。`lib/`・`services/`・`repositories/` も React に依存させない。これらは ESLint で強制している。
+- 評価は `ReviewRating`（'again' | 'hard' | 'good' | 'easy'）、FSRS の状態は `SchedulingSnapshot` などのドメイン型で扱う。ts-fsrs の型・enum との変換は `src/lib/fsrs/` だけで行う。
+- データ層は `src/repositories/types.ts` の interface 経由で使う。interface を変えたらメモリ実装とテストも合わせて更新する。
 - FSRS の計算を UI コンポーネントに書かない。FSRS アルゴリズムを独自実装しない。
 - **Card（教材）と ReviewState（FSRS 状態）と ReviewLog（履歴）は別ドキュメント。** Card の作成・更新・インポートで ReviewState / ReviewLog を変更・削除するコードを書かない。
-- ReviewLog は追記のみ（更新・削除しない）。ReviewState・ReviewLog・集計（progress）は 1 つの batch でアトミックに保存する。ReviewLog には before / after の FSRS スナップショットと `schedulerConfigId` を必ず入れる。
+- ReviewLog は追記のみ（更新・削除しない）。ReviewState・ReviewLog・集計（progress）は 1 つの batch でアトミックに保存する。ReviewLog には previousState / nextState の FSRS スナップショットと `scheduler`（設定 id・ライブラリのバージョン）を必ず入れる。
 - 画面表示のために教材の全 Card・全 ReviewState・全 ReviewLog を読み込むコードを書かない（例外：利用者が明示的に実行する「再集計」）。必要な分だけをクエリする（`docs/DATA_MODEL.md` §3）。
 - 削除は原則しない。カードは `isArchived` でアーカイブする。
 - 教材名・カテゴリー名などをコードにハードコードしない（サンプルデータ・テストは除く）。

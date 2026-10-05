@@ -1,6 +1,6 @@
 # アーキテクチャ (ARCHITECTURE)
 
-最終更新: 2026-10-04 / Phase 0（改訂 1）
+最終更新: 2026-10-05 / Phase 2
 
 ## 1. 全体像
 
@@ -28,7 +28,7 @@
 
 | レイヤー | import してよいもの | 禁止 |
 |---|---|---|
-| `domain/` | なし（型と純粋関数のみ） | React, firebase, ts-fsrs |
+| `domain/` | 同じディレクトリ内のファイルのみ（型と純粋関数） | 外部パッケージすべて（React, react-router, firebase, ts-fsrs 等）、他のレイヤー |
 | `lib/fsrs/` | `ts-fsrs`, `domain/` | React, firebase |
 | `services/` | `domain/`, `lib/fsrs/`, `repositories/types` | React, firebase, ts-fsrs 直接 |
 | `repositories/firestore/` | `firebase/*`, `domain/` | React, ts-fsrs |
@@ -37,6 +37,29 @@
 これにより：
 - バックエンドを Firestore から別のものに替えても、`repositories/` の実装を差し替えるだけで UI と FSRS ロジックを再利用できる。
 - ts-fsrs の API 変更（例：v6 での `elapsed_days` 削除）の影響を `lib/fsrs/` に閉じ込められる。
+
+この制限は ESLint（`eslint.config.js` の `layerRules`）で強制し、制限が働くことを `tests/architecture/import-boundaries.test.ts` で確認している。
+
+### Domain → FSRS Adapter → Repository の責務
+
+| 層 | 場所 | 責務 | 知らないこと |
+|---|---|---|---|
+| **Domain** | `src/domain/` | データの意味と制約（型）、ライブラリに依存しない判定・集計（未学習判定、期限判定、新規カードの order 順の取り出し、集計の加算・再集計、学習日の計算、FSRS 設定 id の生成） | ts-fsrs、Firebase、React、日時以外の環境 |
+| **FSRS Adapter** | `src/lib/fsrs/`（Phase 3） | ドメイン型 ↔ ts-fsrs の型の変換（`ReviewRating` ↔ `Rating`、`LearningPhase` ↔ `State`、`SchedulingSnapshot` ↔ ts-fsrs `Card`）、次回予定の計算、ライブラリ既定値の解決、`SchedulerConfig` の生成 | Firebase、React、保存方法 |
+| **Repository** | `src/repositories/`（interface は `types.ts`、実装は `memory/` と `firestore/`） | 保存と取得。「必要な分だけ」のクエリ、レビュー結果（ReviewState・ReviewLog・集計）のアトミックな保存、外部エラーの `AppError` への変換、`Date` ↔ `Timestamp` の変換（Firestore） | ts-fsrs、React、FSRS の計算 |
+
+サービス（`src/services/`、Phase 3〜）がこの 3 つを組み合わせる。例：レビュー時は Repository から状態を取得 → Adapter で次の状態を計算 → Domain の型で ReviewState・ReviewLog を組み立て → Repository の `recordReview` で保存。
+
+### Repository の構成（`src/repositories/types.ts`）
+
+| interface | 主なメソッド | 備考 |
+|---|---|---|
+| `MaterialRepository` | `list` / `get` / `save` | |
+| `CardRepository` | `getByIds` / `listNewCandidates` / `countActive` / `saveMany` | Card だけを扱い、ReviewState / ReviewLog に触れない |
+| `ReviewRepository` | `getStates` / `listDue` / `countDue` / `recordReview` / `listLogsForCard` / `getProgress` | ReviewState・ReviewLog・集計は 1 回のレビューで同時に更新する必要があるため 1 つにまとめた。**ReviewLog を変更・削除するメソッドは持たない**（追記のみ） |
+| `SettingsRepository` | `getSettings` / `saveSettings` / `getSchedulerConfig` / `saveSchedulerConfig` | SchedulerConfig は作成のみ |
+
+メモリ実装（`createMemoryRepositories`）は呼び出しごとに独立したデータを持ち、保存・取得のたびにコピーする（呼び出し側の変更が保存済みデータに影響しない）。Firestore 実装（Phase 5）も同じ interface を満たし、同じテストの考え方で確認する。
 
 ## 2. ディレクトリ構成（予定）
 
@@ -66,7 +89,8 @@ fsrs-study-app/
     ├─ pages/                 HomePage, StudyPage, MaterialsPage, ImportPage, StatsPage, SettingsPage, LoginPage
     ├─ components/            共通 UI（Button, RatingButtons, CardView, CardImage, ErrorMessage, TabBar …）
     ├─ hooks/                 useMaterials, useStudySession, useStats …
-    ├─ domain/                型定義, 日付境界（dayKey）, id 検証, Result 型, AppError
+    ├─ domain/                型定義と純粋関数（material, card, rating, scheduling, review, progress, selection, date, settings, errors）
+    ├─ dev/                   開発用ダミーデータ（sampleData.ts）とそれを読み込んだメモリリポジトリ
     ├─ lib/
     │   └─ fsrs/              scheduler.ts（ts-fsrs ラッパー）, intervalLabel.ts
     ├─ services/
@@ -80,7 +104,7 @@ fsrs-study-app/
     │   ├─ memory/            インメモリ実装（テスト・開発）
     │   └─ firestore/         Firestore 実装（converter, zod でのデータ検証）
     ├─ styles/                CSS（CSS 変数 + CSS Modules。UI ライブラリは使わない）
-    └─ test/                  テストの共通設定（setup.ts）
+    └─ test/                  テストの共通設定（setup.ts）とテストデータ作成関数（factories.ts）
 ```
 
 ## 3. 採用ライブラリ
@@ -108,13 +132,13 @@ fsrs-study-app/
 ```
 Card（教材の中身）        ReviewState（FSRS の状態）      ReviewLog（履歴, 追記のみ）       MaterialProgress（集計）
  question / answer ...     due, stability, difficulty…     rating, reviewedAt               件数・評価回数・日別数
- examDifficulty            lastLogId, schedulerConfigId    before / after スナップショット   newCursorOrder
+ examDifficulty            lastLogId, schedulerConfigId    previous / next スナップショット  newCursorOrder
  ↑ インポートで更新        ↑ レビューでのみ更新            ↑ レビューで1件追加               ↑ increment で加算
 ```
 
 - **Card** は「何を問うか」だけを持つ。学習に関する値を一切持たない。インポートで上書きされても構わない。
 - **ReviewState** は「いつ・どれくらいの強さで覚えているか」。Card と同じ id の別ドキュメント。Card の更新では触らない。
-- **ReviewLog** は真実の記録（source of truth）。レビュー前後の FSRS 状態の完全なスナップショットと、計算に使った FSRS 設定の id（`schedulerConfigId`）を持つ。ReviewState は「最新 ReviewLog の `after`」と一致するキャッシュで、欠落時はそこからコピーして復元する。
+- **ReviewLog** は真実の記録（source of truth）。レビュー前後の FSRS 状態の完全なスナップショットと、計算に使った FSRS 設定の id（`schedulerConfigId`）を持つ。ReviewState は「最新 ReviewLog の `nextState`」と一致するキャッシュで、欠落時はそこからコピーして復元する。
 - **SchedulerConfig** は FSRS 設定（ts-fsrs のバージョン + パラメータ）の不変スナップショット。設定やライブラリを更新しても、過去のレビューがどの設定で計算されたか追跡できる。
 - 用語の衝突を避ける：`Card.examDifficulty` は**問題そのものの難易度**（作成者が付ける）、`ReviewState.difficulty` は **FSRS の内部難易度**。
 
@@ -122,23 +146,23 @@ Card（教材の中身）        ReviewState（FSRS の状態）      ReviewLog�
 
 ```ts
 createScheduler(settings): { scheduler; config: SchedulerConfig }  // config.id は バージョン + パラメータのハッシュ
-newFsrsSnapshot(now: Date): FsrsSnapshot                           // createEmptyCard
-previewRatings(snapshot, now): Record<Grade, { due: Date; scheduledDays: number }>  // repeat
-applyRating(snapshot, rating, now): FsrsSnapshot                   // next
-recomputeFromHistory(reviews): FsrsSnapshot                        // reschedule（将来・利用者の明示操作のみ）
+newSnapshot(now: Date): SchedulingSnapshot                                      // createEmptyCard
+previewRatings(snapshot, now): Record<ReviewRating, { due: Date; scheduledDays: number }>  // repeat
+applyRating(snapshot, rating: ReviewRating, now): SchedulingSnapshot           // next
+recomputeFromHistory(reviews): SchedulingSnapshot                              // reschedule（将来・利用者の明示操作のみ）
 ```
 
-`FsrsSnapshot` はアプリ側の型（ts-fsrs の `Card` と同じフィールド構成のプレーンオブジェクト）。ts-fsrs の型をアプリ全体に漏らさない。ts-fsrs のバージョンはビルド時に `package.json` から埋め込む。
+入出力はドメイン型（`SchedulingSnapshot`, `ReviewRating`）だけ。ts-fsrs の型・enum はこのディレクトリの外に出さない。ts-fsrs のバージョンはビルド時に `package.json` から埋め込む。
 
 ### services/reviewService.ts（純粋関数）
 
 ```ts
 reviewCard({ card, currentState?, rating, now, logId, scheduler }):
-  { newState: ReviewState; log: ReviewLog; progressDelta: ProgressDelta }
+  ReviewRecord   // { state: ReviewState; log: ReviewLog; context: ReviewProgressContext }
 ```
-- `currentState` がなければ新規カードとして `newFsrsSnapshot(now)` から開始し（`log.before = null`）、`firstReviewedAt = now`。
-- `log.after` と `newState` の FSRS 値は同じスナップショット。`newState.lastLogId = logId`。
-- 戻り値をリポジトリの `saveReview(newState, log, progressDelta)` が 1 つの batch で書き込む（アトミック。集計は `increment()`）。
+- `currentState` がなければ新規カードとして `newSnapshot(now)` から開始し（`log.previousState = null`）、`firstReviewedAt = now`。
+- `log.nextState` と `state` の FSRS 値は同じスナップショット。`state.lastLogId = log.id`。
+- 戻り値をリポジトリの `recordReview(record)` が 1 つの batch で書き込む（アトミック。集計は Domain の `applyReview` と同じ加算を Firestore では `increment()` で行う）。
 
 ### services/studyQueue.ts（純粋関数）
 
@@ -178,10 +202,10 @@ remainingNewCount({ progress, material, todayKey }): number
 
 - `domain/errors.ts` に `AppError`（種別 + 日本語メッセージ）を定義。Firestore / Auth のエラーコードはリポジトリ層・Auth 層で `AppError` に変換し、UI は日本語メッセージを表示するだけにする。
 - ルートと各ページに Error Boundary。
-- Firestore から読み込んだ ReviewState は zod で検証する。不正なものはそのカードの最新 ReviewLog の `after` から復元して警告を出す。ReviewLog もない場合は未学習として扱う。
+- Firestore から読み込んだ ReviewState は zod で検証する。不正なものはそのカードの最新 ReviewLog の `nextState` から復元して警告を出す。ReviewLog もない場合は未学習として扱う。
 
 ## 8. 将来拡張の受け皿
 
 - **模擬試験モード**：`services/exam/selectExamCards(cards, criteria)`（カテゴリー・件数・ランダム）を純粋関数で追加し、結果は `users/{uid}/materials/{m}/examSessions` に保存。`reviewService` と ReviewState には一切触れない。
-- **FSRS パラメータ最適化**：ReviewLog に必要な値（rating, reviewedAt, before/after）を保存しているため、後から `@open-spaced-repetition/binding` 等で最適化し、`settings.fsrsWeights` に保存できる。新しい設定は新しい SchedulerConfig として記録される。
+- **FSRS パラメータ最適化**：ReviewLog に必要な値（rating, reviewedAt, previousState / nextState）を保存しているため、後から `@open-spaced-repetition/binding` 等で最適化し、`settings.fsrsWeights` に保存できる。新しい設定は新しい SchedulerConfig として記録される。
 - **別バックエンド**：`repositories/types.ts` の interface を実装すればよい。

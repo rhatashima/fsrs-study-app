@@ -3,12 +3,18 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { describe, expect, it } from 'vitest'
+import { createSampleRepositories } from '../dev/sampleRepositories'
 import { NAV_ITEMS } from './navigation'
+import { RepositoryContext } from './repositoryContext'
 import { routes } from './routes'
 
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] })
-  render(<RouterProvider router={router} />)
+  render(
+    <RepositoryContext value={createSampleRepositories()}>
+      <RouterProvider router={router} />
+    </RepositoryContext>,
+  )
   return router
 }
 
@@ -42,6 +48,14 @@ describe('routes', () => {
 
     await router.navigate(-1)
     expect(await screen.findByRole('heading', { level: 1, name: 'ホーム' })).toBeInTheDocument()
+  })
+
+  it('教材画面にメモリ上の教材名とカード数（アーカイブ除く）を表示する', async () => {
+    renderAt('/materials')
+    const castle = await screen.findByRole('article', { name: '日本城郭検定3級' })
+    expect(castle).toHaveTextContent('カード 15 枚（未学習 15 枚）')
+    const test = screen.getByRole('article', { name: 'テスト用教材' })
+    expect(test).toHaveTextContent('カード 4 枚（未学習 4 枚）')
   })
 
   it('存在しない URL では「ページが見つかりません」を表示する', async () => {

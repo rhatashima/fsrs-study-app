@@ -6,7 +6,7 @@
 - 教材は CSV / JSON で一括登録し、PC とスマートフォン（PWA）の複数端末で同じ学習履歴を使います。
 - 利用者は 1 名のみ（一般公開しません）。
 
-> **現在開発中です（Phase 1：基本構成）。** 画面は骨組みのみで、学習機能・ログイン・データ保存はまだ動きません。進捗は [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) を参照してください。
+> **現在開発中です（Phase 2：ドメインモデルとメモリ上のデータ層まで完了）。** 画面は骨組みのみで、学習機能・ログイン・データ保存はまだ動きません。データは開発用のダミーデータをメモリ上に読み込んでいるだけで、再読み込みすると元に戻ります。進捗は [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) を参照してください。
 
 ## ドキュメント
 
@@ -60,13 +60,17 @@ Firebase は無料の Spark プランの範囲で使う設計です。
 
 ```
 src/
-  app/          ルーティング・共通レイアウト
-  components/   共通 UI 部品（タブバーなど）
-  pages/        各画面（ホーム・学習・教材・成績・設定）
-  styles/       全体のスタイル
-  test/         テストの共通設定
+  app/            ルーティング・共通レイアウト・データ層の受け渡し
+  components/     共通 UI 部品（タブバーなど）
+  pages/          各画面（ホーム・学習・教材・成績・設定）
+  domain/         データの型と純粋関数（外部ライブラリに依存しない）
+  repositories/   データ層の interface（types.ts）とメモリ実装（memory/）
+  dev/            開発用ダミーデータ
+  styles/         全体のスタイル
+  test/           テストの共通設定・テストデータ作成関数
+public/images/samples/  ダミーデータ用の自作 SVG 画像
 tests/
-  architecture/ レイヤー間の import 制限のテスト
+  architecture/   レイヤー間の import 制限のテスト
 ```
 
 FSRS（`src/lib/fsrs/`）、Firebase（`src/services/firebase/`、`src/repositories/firestore/`）などは各 Phase で追加します。詳しくは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。

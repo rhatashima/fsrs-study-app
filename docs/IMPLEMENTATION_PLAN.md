@@ -1,6 +1,6 @@
 # 実装計画 (IMPLEMENTATION_PLAN)
 
-最終更新: 2026-10-04 / Phase 0（改訂 1）
+最終更新: 2026-10-05 / Phase 2
 
 ## 1. 当初案からの変更点と理由
 
@@ -13,13 +13,13 @@
 | インポートの**パース・検証・差分計算は純粋関数**として Phase 6 で実装 | Firestore なしでユニットテストできる |
 | 統計は教材ごとの集計ドキュメント（`progress/summary`）1 件から表示 | 統計画面のために ReviewLog・ReviewState を全件読む必要をなくす（無料枠対策） |
 | ホーム・学習開始は期限到来分と必要な新規分だけをクエリ | 読み取り数を「教材の総カード数」ではなく「その日に学習する枚数」に比例させる |
-| ReviewLog に before / after の FSRS スナップショットと `schedulerConfigId` を保存 | ReviewState を再計算なしで安全に復元でき、ts-fsrs のバージョンや設定変更後も過去の計算を追跡できる |
+| ReviewLog に previousState / nextState の FSRS スナップショットと設定・ライブラリバージョンへの参照を保存 | ReviewState を再計算なしで安全に復元でき、ts-fsrs のバージョンや設定変更後も過去の計算を追跡できる |
 
 ## 2. 不要に複雑になりやすい点と対処
 
 - **オフライン編集同期**：MVP では実装しない。Firestore の永続キャッシュも使わない。
 - **FSRS 設定の記録**：ReviewLog に毎回パラメータ全体をコピーせず、不変の SchedulerConfig ドキュメントの id だけを持たせる。
-- **ReviewLog からの再計算**：MVP では実装しない。復元は「最新 ReviewLog の `after` をコピー」だけで足りる。
+- **ReviewLog からの再計算**：MVP では実装しない。復元は「最新 ReviewLog の `nextState` をコピー」だけで足りる。
 - **集計のずれ**：レビュー時は `increment()` で加算するだけにし、カテゴリー変更などによるずれは手動の「再集計」で直す（自動の整合処理は作らない）。
 - **教材ごとの FSRS パラメータ**：不要。全教材共通。
 - **Firebase Storage**：Spark では新規利用不可のため使わない。画像は外部 URL か Hosting の `public/images/`。
@@ -42,19 +42,19 @@
 - README.md の初版（起動・テスト・build 方法）。
 - コミット例：`chore: scaffold Vite React TypeScript app`, `chore: add lint and test tooling`, `feat: add app shell with bottom navigation`
 
-### Phase 2：型とデータモデル（branch: `feature/data-model`）
-- `domain/` の型（StudyMaterial, Card, FsrsSnapshot, ReviewState, ReviewLog, SchedulerConfig, MaterialProgress, AppSettings）、`dayKey`、id 検証、AppError。
-- `repositories/types.ts` の interface（「期限到来分を取得」「order カーソル以降の新規を取得」など、必要分だけを取るメソッド）と `repositories/memory/` の実装。
-- `samples/` のダミー教材 2 つ（城郭ダミー 20 問・画像付き 2 問を含む、テスト用教材）。
-- テスト：dayKey の境界、id 検証、Card 更新時に ReviewState が保持されること、期限・新規カードの取得。
-- コミット例：`feat: add domain types and repository interfaces`, `feat: add in-memory repositories and sample data`
+### Phase 2：ドメインモデルとメモリ上のデータ層（branch: `feature/domain-model`）✅
+- `src/domain/`：StudyMaterial, Card, ReviewRating, LearningPhase, SchedulingSnapshot, ReviewState, ReviewLog, FsrsParams, SchedulerConfig, SchedulerRef, MaterialProgress, AppSettings, AppError の型と、純粋関数（未学習判定、期限判定、新規カードの order 順取り出し、期限到来カードの取り出し、集計の加算 / 再集計、学習日、FSRS 設定 id、カード id 検証）。
+- `src/repositories/types.ts` の interface（必要分だけを取るメソッド。ReviewLog の変更・削除メソッドなし）と `src/repositories/memory/` の実装。
+- `src/dev/sampleData.ts`：ダミー教材 2 つ（日本城郭検定3級 15 枚・テスト用教材 5 枚うち 1 枚アーカイブ）、画像付き 2 枚（`public/images/samples/` の自作 SVG）。
+- 教材画面にメモリ上の教材名とカード数を表示（動作確認用の最小限の接続）。
+- CSV / JSON のサンプルファイル（`samples/`）は、インポート形式を実装する Phase 6 で作成する。
 
 ### Phase 3：ローカル FSRS 学習フロー（branch: `feature/fsrs-review`）
 - `lib/fsrs/`：ts-fsrs ラッパー、間隔ラベル（「10分」「3日」「2か月」）。
 - `services/reviewService.ts`、`services/studyQueue.ts`。
 - ホーム（復習数・新規数・開始ボタン）と学習画面（答えを見る → 4 ボタン + 次回予定）。画像表示と読み込み失敗時の代替表示。
 - この段階はインメモリリポジトリ（＋必要なら localStorage）で動作。
-- テスト：スケジュール計算、ReviewState 更新、ReviewLog 生成（`after` と ReviewState の一致、`before` と前回 `after` の一致）、SchedulerConfig の id が設定ごとに決まること、新規カード判定、期限到来判定、新規上限、集計の増分、学習ステップの再出題、FSRS 状態欠落時のスナップショット復元。
+- テスト：スケジュール計算、ReviewState 更新、ReviewLog 生成（`nextState` と ReviewState の一致、`previousState` と前回 `nextState` の一致）、SchedulerConfig の id が設定ごとに決まること、新規カード判定、期限到来判定、新規上限、集計の増分、学習ステップの再出題、FSRS 状態欠落時のスナップショット復元。
 - コミット例：`feat: add ts-fsrs scheduler wrapper`, `feat: add study queue and review service`, `feat: add home and study screens`, `test: add FSRS scheduling tests`
 
 ### Phase 4：Firebase Authentication（branch: `feature/firebase-auth`）

@@ -1,6 +1,6 @@
 # データモデル (DATA_MODEL)
 
-最終更新: 2026-10-04 / Phase 0（改訂 1）
+最終更新: 2026-10-05 / Phase 2
 対象 ts-fsrs バージョン: 5.4.2
 
 ## 0. 設計の原則
@@ -28,154 +28,174 @@ users/{uid}
 
 ## 2. 型定義
 
-日時はアプリ内では `Date`、Firestore では `Timestamp`（変換はリポジトリ層の converter）。
+型の正本は `src/domain/` のコード。ここでは意味と制約を説明する。
 
-### StudyMaterial
+- 日時はアプリ内では標準の `Date`。Firestore の `Timestamp` との変換は Phase 5 の Firestore リポジトリの converter で行う。
+- **ドメイン型は ts-fsrs に依存しない。** 評価・学習段階・FSRS の状態はアプリ側の型で表し、ts-fsrs の型（`Card`, `Rating`, `State` など）との変換は `src/lib/fsrs/` のアダプター（Phase 3）が行う。
+- Firestore にはドメイン型のフィールド名（camelCase）のまま保存する。
+
+### StudyMaterial（`src/domain/material.ts`）
 
 | フィールド | 型 | 必須 | 説明 |
 |---|---|---|---|
-| id | string | ✓ | Firestore 自動 id |
+| id | string | ✓ | Firestore 自動 id（開発用データは `sample-castle-3` など固定 id） |
 | title | string | ✓ | 例：日本城郭検定3級 |
 | description | string | ✓ | 空文字可 |
 | isActive | boolean | ✓ | false の教材はホームで選べない |
-| newCardsPerDay | number | ✓ | 初期値 10 |
+| newCardsPerDay | number | ✓ | 1 日の新規カード上限。初期値 10（`DEFAULT_NEW_CARDS_PER_DAY`） |
 | createdAt / updatedAt | Date | ✓ | |
 
-### Card（教材の中身。学習に関する値を一切持たない）
+### Card（`src/domain/card.ts`。学習に関する値を一切持たない）
 
 | フィールド | 型 | 必須 | 説明 |
 |---|---|---|---|
-| id | string | ✓ | インポートファイルの id。`^[A-Za-z0-9_-]{1,100}$` |
+| id | string | ✓ | インポートファイルの id。`^[A-Za-z0-9_-]{1,100}$`（`isValidCardId`） |
 | materialId | string | ✓ | |
 | question | string | ✓ | プレーンテキスト（改行可） |
 | answer | string | ✓ | |
-| explanation | string | | 空文字可 |
-| category | string | ✓ | 空の場合は「未分類」 |
+| explanation | string | ✓ | 空文字可 |
+| category | string | ✓ | 空の場合は「未分類」として扱う（`categoryLabel`） |
 | subcategory | string | | |
 | tags | string[] | ✓ | 空配列可 |
-| **examDifficulty** | 1〜5 の整数 | | **問題そのものの難易度**（作成者が付ける）。FSRS の difficulty とは無関係 |
-| importance | 1〜5 の整数 | | 重要度（作成者が付ける） |
+| **examDifficulty** | `Level`（1〜5） | | **問題そのものの難易度**（作成者が付ける）。FSRS の difficulty とは無関係。Card に `difficulty` という名前の項目は作らない |
+| importance | `Level`（1〜5） | | 重要度（作成者が付ける） |
 | imageUrl | string | | https URL または `/images/...` |
 | source | string | | 出典 |
 | notes | string | | メモ |
-| order | number | ✓ | 新規カードの出題順。新規作成時に「教材内の最大値 + 1」を採番し、更新時は変えない |
+| order | number | ✓ | 新規カードを出す順番（1 以上の整数）。新規作成時に「教材内の最大値 + 1」を採番し、更新時は変えない |
 | isArchived | boolean | ✓ | true なら出題・集計の対象外。履歴は残る |
 | createdAt / updatedAt | Date | ✓ | |
 
-### FsrsSnapshot（ts-fsrs 5.x の `Card` と同じ構成。ReviewState と ReviewLog で共通）
+### ReviewRating（`src/domain/rating.ts`）
 
 ```ts
-interface FsrsSnapshot {
-  due: Date;
-  stability: number;
-  difficulty: number;        // FSRS 内部の難易度（Card.examDifficulty とは別物）
-  elapsed_days: number;      // ts-fsrs v6 で削除予定。lib/fsrs 内でのみ参照する
-  scheduled_days: number;
-  learning_steps: number;
-  reps: number;
-  lapses: number;
-  state: 0 | 1 | 2 | 3;      // New / Learning / Review / Relearning
-  last_review: Date | null;
+type ReviewRating = 'again' | 'hard' | 'good' | 'easy'
+type RatingCounts = Record<ReviewRating, number>
+```
+
+ts-fsrs の `Rating`（数値 enum）とは `src/lib/fsrs/` で変換する。Firestore にも文字列のまま保存する。
+
+### SchedulingSnapshot（`src/domain/scheduling.ts`。ある時点の FSRS の状態）
+
+ReviewState の FSRS 部分と、ReviewLog の `previousState` / `nextState` で共通の型。
+
+```ts
+type LearningPhase = 'new' | 'learning' | 'review' | 'relearning'   // ts-fsrs の State に対応
+
+interface SchedulingSnapshot {
+  phase: LearningPhase
+  due: Date                    // 次回の復習予定
+  stability: number            // FSRS の安定度
+  difficulty: number           // FSRS が計算する記憶の難易度（Card.examDifficulty とは別物）
+  scheduledDays: number
+  learningSteps: number        // 学習ステップの何段目か
+  reps: number
+  lapses: number
+  lastReviewedAt: Date | null
 }
 ```
 
-フィールド名は ts-fsrs と同じ snake_case で保存する。ライブラリへの受け渡しや将来の再計算ツールへの入力を単純にするため。
+ts-fsrs v5 の `Card` から、v6 で削除予定の `elapsed_days` を除いている（経過日数は `lastReviewedAt` から求められるため）。アダプターが必要に応じて補う。
 
-### ReviewState（ドキュメント id = cardId）
+### ReviewState（`src/domain/review.ts`。ドキュメント id = cardId）
 
 ```ts
-interface ReviewState extends FsrsSnapshot {   // FSRS の値はトップレベル（ReviewState.difficulty = FSRS 内部値）
-  cardId: string;
-  materialId: string;
-  suspended: boolean;              // カードのアーカイブ時に true。期限クエリから除外するため
-  firstReviewedAt: Date;
-  counters: { again: number; hard: number; good: number; easy: number };  // 統計の再集計用
-  lastLogId: string;               // この状態を作った ReviewLog の id（監査用）
-  schedulerConfigId: string;       // この状態を計算した FSRS 設定
-  updatedAt: Date;
+interface ReviewState extends SchedulingSnapshot {   // ReviewState.difficulty = FSRS 内部の難易度
+  cardId: string
+  materialId: string
+  suspended: boolean          // カードのアーカイブ時に true。期限到来の対象から外す
+  firstReviewedAt: Date
+  ratingCounts: RatingCounts  // このカードの評価回数（統計の再集計用）
+  lastLogId: string           // この状態を作った ReviewLog の id
+  schedulerConfigId: string   // この状態を計算した FSRS 設定
+  updatedAt: Date
 }
 ```
 
-- **ReviewState が存在しない = 未学習（新規）カード**。新規カードのために空の ReviewState を作らない。
-- 不変条件：`ReviewState` の FSRS 値 == `reviewLogs/{lastLogId}.after`。
+- **ReviewState が存在しない = 未学習（新規）カード**（`isUnstudied`）。新規カードのために空の ReviewState を作らない。
+- 期限到来：`!suspended && due <= now`（`isDue`）。
+- 不変条件：ReviewState の FSRS 部分 == `lastLogId` の ReviewLog の `nextState`（メモリ実装は保存時に検証する）。
 
-### ReviewLog（追記のみ。更新・削除しない）
+### ReviewLog（`src/domain/review.ts`。追記のみ。すべての項目が readonly）
 
 ```ts
 interface ReviewLog {
-  id: string;                      // Firestore 自動 id（クライアントで事前採番し、ReviewState.lastLogId に入れる）
-  cardId: string;
-  materialId: string;
-  reviewedAt: Date;
-  rating: 1 | 2 | 3 | 4;           // Again / Hard / Good / Easy
-  durationMs: number | null;       // 表示から評価までの時間（分析用）
-  before: FsrsSnapshot | null;     // レビュー直前の状態。新規カードなら null
-  after: FsrsSnapshot;             // レビュー後の状態（完全なスナップショット）
-  schedulerConfigId: string;       // 計算に使った FSRS 設定（ライブラリのバージョン + パラメータ）
+  id: string                                  // クライアントで採番し、ReviewState.lastLogId に入れる
+  materialId: string
+  cardId: string
+  reviewedAt: Date
+  rating: ReviewRating
+  previousState: SchedulingSnapshot | null    // レビュー直前の状態。初回レビュー（新規カード）では null
+  nextState: SchedulingSnapshot               // レビュー後の状態
+  scheduler: { configId: string; library: string; libraryVersion: string }  // SchedulerRef
+  durationMs: number | null                   // 表示から評価までの時間（分析用）
 }
 ```
 
-**なぜ before / after の完全スナップショットを持つか**
-- **復元**：ReviewState が欠落・破損しても、そのカードの最新 ReviewLog の `after` をコピーすれば、当時の計算結果どおりに戻せる。再計算は不要で、ライブラリのバージョンや設定に左右されない。
-- **監査**：各レビューで「どの状態から、どの評価で、どの設定で、どの状態になったか」が 1 ドキュメントで完結する。`before` は直前の ReviewLog の `after` と一致するはずなので、連鎖が途切れていないか検証できる。
-- サイズは 1 件あたり約 0.5〜1KB。1 日 100 レビューを 10 年続けても数百 MB 未満で、無料枠（1GiB）に収まる見込み。
+**なぜ previousState / nextState の完全なスナップショットを持つか**
+- **復元**：ReviewState が欠落・破損しても、そのカードの最新 ReviewLog の `nextState` をコピーすれば当時の計算どおりに戻せる。再計算しないので、ライブラリのバージョンや設定に左右されない。
+- **監査**：各レビューで「どの状態から、どの評価で、どの設定で、どの状態になったか」が 1 件で完結する。`previousState` は直前の ReviewLog の `nextState` と一致するはずなので、連鎖が途切れていないか検証できる。
+- `scheduler` には設定 id に加えてライブラリ名とバージョンも入れる。SchedulerConfig ドキュメントを参照しなくても、どのバージョンで計算したかが分かる。
+- サイズは 1 件あたり約 0.5〜1KB。1 日 100 レビューを 10 年続けても無料枠（1GiB）に収まる見込み。
 
 **2 種類の「復元」を区別する**
 
 | 方法 | 用途 | 結果 |
 |---|---|---|
-| スナップショット復元（最新 ReviewLog の `after` をコピー） | 欠落・破損からの復旧 | 当時の計算どおり |
-| 再計算（ts-fsrs `reschedule` に全 ReviewLog の `rating` と `reviewedAt` を渡す） | FSRS パラメータ変更・最適化後に予定を引き直す（将来機能・利用者の明示操作のみ） | 現在の設定での計算結果 |
+| スナップショット復元（最新 ReviewLog の `nextState` をコピー） | 欠落・破損からの復旧 | 当時の計算どおり |
+| 再計算（ts-fsrs の `reschedule` に全 ReviewLog の `rating` と `reviewedAt` を渡す） | FSRS 設定の変更・最適化後に予定を引き直す（将来機能・利用者の明示操作のみ） | 現在の設定での計算結果 |
 
-### SchedulerConfig（`users/{uid}/schedulerConfigs/{configId}`。作成のみ・不変）
+### SchedulerConfig（`src/domain/scheduling.ts`。`users/{uid}/schedulerConfigs/{id}`。作成のみ・不変）
 
 ```ts
 interface SchedulerConfig {
-  id: string;                      // `ts-fsrs@5.4.2-<パラメータのハッシュ8桁>`（決定的に生成）
-  library: 'ts-fsrs';
-  libraryVersion: string;          // 例 "5.4.2"
-  params: {                        // generatorParameters() の結果をそのまま保存
-    request_retention: number;
-    maximum_interval: number;
-    w: number[];
-    enable_fuzz: boolean;
-    enable_short_term: boolean;
-    learning_steps: string[];
-    relearning_steps: string[];
-  };
-  createdAt: Date;
+  id: string               // schedulerConfigId() で生成：例 "ts-fsrs@5.4.2-1a2b3c4d"
+  library: string          // "ts-fsrs"
+  libraryVersion: string   // "5.4.2"
+  params: FsrsParams       // すべての値が確定したパラメータ
+  createdAt: Date
+}
+
+interface FsrsParams {
+  requestRetention: number
+  maximumInterval: number
+  weights: number[]
+  enableFuzz: boolean
+  enableShortTerm: boolean
+  learningSteps: StepDuration[]     // 例 ["1m", "10m"]
+  relearningSteps: StepDuration[]
 }
 ```
 
-- ReviewLog には `schedulerConfigId` だけを入れ、パラメータ本体を毎回コピーしない。
-- 設定変更・ライブラリ更新のたびに新しい id のドキュメントが 1 つ増えるだけ。古い設定も残るので、過去のレビューがどの設定で計算されたかを後から追跡できる。
-- 起動時：現在の設定から id を計算し、`settings.activeSchedulerConfigId` と同じなら何もしない。違う場合だけ SchedulerConfig を作成して `settings` を更新する（通常は追加の読み取りなし）。
+- id はライブラリ名・バージョン・パラメータのハッシュ（FNV-1a、暗号用途ではない）から決まる。設定を変えたときだけ新しい記録が 1 件増える。
+- 起動時：現在の設定から id を計算し、`settings.activeSchedulerConfigId` と同じなら何もしない。違う場合だけ SchedulerConfig を作成して `settings` を更新する。
 
-### MaterialProgress（`materials/{m}/progress/summary`）
+### MaterialProgress（`src/domain/progress.ts`。`materials/{m}/progress/summary`）
 
 ホーム・統計を**このドキュメント 1 件の読み取り**で表示するための集計。
 
 ```ts
 interface MaterialProgress {
-  totalCards: number;              // アーカイブされていないカード数
-  studiedCards: number;            // ReviewState を持つカード数（アーカイブ除く）
-  newCursorOrder: number;          // ここまでの order のカードは新規導入を検討済み
-  totals: { reviews: number; again: number; hard: number; good: number; easy: number };
-  byCategory: { [category: string]: {
-    totalCards: number; studiedCards: number;
-    reviews: number; again: number; hard: number; good: number; easy: number;
-  } };
-  daily: { [dayKey: string]: { reviews: number; newCards: number } };  // 直近 30 日分だけ保持
-  rebuiltAt: Date | null;          // 最後に全件から再集計した日時
-  updatedAt: Date;
+  materialId: string
+  totalCards: number            // アーカイブされていないカード数
+  studiedCards: number          // 1 回以上学習したカード数（未学習数 = totalCards − studiedCards）
+  newCursorOrder: number        // order がこの値以下のカードは新規導入を検討済み
+  ratingCounts: RatingCounts    // 評価別の回数（総レビュー数はこの合計）
+  byCategory: Record<string, { totalCards: number; studiedCards: number; ratingCounts: RatingCounts }>
+  daily: Record<DayKey, { reviews: number; newCards: number }>   // 直近 30 日分
+  lastReviewedAt: Date | null
+  rebuiltAt: Date | null        // 最後に全件から作り直した日時
+  updatedAt: Date
 }
 ```
 
-- レビュー時は `increment()` で加算するため、読み取り不要で、複数端末から同時に書いても数がずれない。
-- インポート・アーカイブ時に `totalCards` とカテゴリー別の件数を増減する。
-- カードのカテゴリーを後から変えると、過去のレビュー数は旧カテゴリーに残る。統計画面の「再集計」ボタン（全 Card + 全 ReviewState を読む。利用者が押したときだけ）で現在のカテゴリーに合わせて作り直す。`ReviewState.counters` はこの再集計のために持つ。
+- 集計の意味は純粋関数で定義する：レビュー時の加算は `applyReview`、全件からの作り直しは `rebuildProgress`。Firestore 実装（Phase 5）は `applyReview` と同じ加算を `increment()` で行う。
+- `DayKey` は `"YYYY-MM-DD"`。設定の区切り時刻（初期値 4 時）より前は前日として扱う（`toDayKey`）。
+- 今日の残り新規数：`remainingNewCardsToday(progress, newCardsPerDay, today)`。
+- カードのカテゴリーを後から変えると、過去の評価回数は旧カテゴリーに残る。統計画面の「再集計」（`rebuildProgress`。全 Card + 全 ReviewState を読む。利用者が押したときだけ）で現在のカテゴリーに合わせる。
+- `rebuildProgress` は、先頭から連続して学習済みのカードまで `newCursorOrder` を進める（間の未学習カードを取りこぼさない）。
 
-### AppSettings（`users/{uid}/settings/app`）
+### AppSettings（`src/domain/settings.ts`。`users/{uid}/settings/app`）
 
 | フィールド | 型 | 初期値 | 説明 |
 |---|---|---|---|
@@ -183,13 +203,13 @@ interface MaterialProgress {
 | requestRetention | number | 0.9 | 目標保持率 |
 | maximumInterval | number | 36500 | 最大間隔（日） |
 | enableFuzz | boolean | true | |
-| learningSteps / relearningSteps | string[] | ts-fsrs 既定値 | |
-| fsrsWeights | number[] \| null | null | null なら ts-fsrs 既定値 |
+| fsrsWeights | number[] \| null | null | null ならライブラリの既定値 |
+| learningSteps / relearningSteps | StepDuration[] \| null | null | null ならライブラリの既定値 |
 | activeSchedulerConfigId | string \| null | null | |
 | lastMaterialId | string \| null | null | |
 | updatedAt | Date | | |
 
-FSRS パラメータは全教材共通。新規カード数のみ教材ごと。
+FSRS パラメータは全教材共通。新規カード数のみ教材ごと。null の項目の既定値は `src/lib/fsrs/` が ts-fsrs から解決する（ドメイン層はライブラリの既定値を知らない）。
 
 ## 3. 画面ごとの読み取り
 
@@ -265,7 +285,7 @@ service cloud.firestore {
 }
 ```
 
-delete はすべて禁止。ReviewLog の `rating` が 1〜4 であることなど、最低限のフィールド検証を Phase 5 で追加する。
+delete はすべて禁止。ReviewLog の `rating` が again / hard / good / easy のいずれかであることなど、最低限のフィールド検証を Phase 5 で追加する。
 
 ## 6. インデックス（`firestore.indexes.json`）
 

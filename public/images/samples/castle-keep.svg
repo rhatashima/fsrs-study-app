@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" role="img" aria-labelledby="t">
+  <title id="t">天守の模式図（開発用ダミー画像）</title>
+  <rect width="320" height="240" fill="#e9eef6"/>
+  <!-- 石垣 -->
+  <path d="M70 230 L90 170 H230 L250 230 Z" fill="#9aa3ae"/>
+  <!-- 1・2 階：入母屋の大屋根 -->
+  <rect x="100" y="135" width="120" height="35" fill="#f7f7f2" stroke="#3b4048" stroke-width="2"/>
+  <path d="M84 140 L160 102 L236 140 Z" fill="#3b4048"/>
+  <rect x="112" y="95" width="96" height="22" fill="#f7f7f2" stroke="#3b4048" stroke-width="2"/>
+  <path d="M100 100 L160 74 L220 100 Z" fill="#3b4048"/>
+  <!-- 望楼（最上階） -->
+  <rect x="134" y="58" width="52" height="22" fill="#f7f7f2" stroke="#3b4048" stroke-width="2"/>
+  <path d="M122 62 L160 36 L198 62 Z" fill="#3b4048"/>
+</svg>

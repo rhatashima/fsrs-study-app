@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" role="img" aria-labelledby="t">
+  <title id="t">額縁に入った抽象図形（開発用ダミー画像）</title>
+  <rect width="320" height="240" fill="#f3efe6"/>
+  <rect x="40" y="20" width="240" height="200" fill="#b08d57"/>
+  <rect x="56" y="36" width="208" height="168" fill="#fbfaf7"/>
+  <circle cx="125" cy="110" r="42" fill="#2f5bd3"/>
+  <rect x="150" y="120" width="80" height="60" fill="#e0a526"/>
+  <path d="M90 190 L130 150 L170 190 Z" fill="#c4473a"/>
+</svg>

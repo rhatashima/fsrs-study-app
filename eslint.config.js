@@ -7,9 +7,12 @@ import tseslint from 'typescript-eslint'
 
 /*
  * レイヤー間の import 制限（docs/ARCHITECTURE.md「依存方向のルール」）
+ *   - src/domain/ は純粋な TypeScript のみ（外部パッケージ・他のレイヤーを import しない）
  *   - ts-fsrs は src/lib/fsrs/ からのみ import できる
  *   - Firebase SDK は src/services/firebase/ と src/repositories/firestore/ からのみ import できる
+ *   - domain / lib / services / repositories は React に依存しない
  * 対象パッケージが未インストールでも、import 文の記述だけで検出される。
+ * 1 つのファイルには下の layerRules のうち最初に一致した 1 つだけを適用する。
  */
 const restrictTsFsrs = {
   group: ['ts-fsrs', 'ts-fsrs/*'],
@@ -20,10 +23,36 @@ const restrictFirebase = {
   message:
     'Firebase SDK は src/services/firebase/ と src/repositories/firestore/ からのみ import してください（ARCHITECTURE.md 参照）。',
 }
-const restrictImports = (...patterns) => ['error', { patterns }]
+const restrictReact = {
+  group: ['react', 'react/*', 'react-dom', 'react-dom/*', 'react-router', 'react-router/*'],
+  message: 'このレイヤーは React に依存させないでください（ARCHITECTURE.md 参照）。',
+}
+const restrictDomainOutside = {
+  // domain 内の相対 import（./x）だけを許可し、外部パッケージと domain の外は禁止
+  regex: '^(?!\\./)',
+  message: 'src/domain/ は同じディレクトリ内のファイル以外を import しないでください（ARCHITECTURE.md 参照）。',
+}
 
-const FSRS_DIRS = ['src/lib/fsrs/**']
-const FIREBASE_DIRS = ['src/services/firebase/**', 'src/repositories/firestore/**']
+const layerRules = [
+  { files: ['src/domain/**'], forbid: [restrictDomainOutside] },
+  { files: ['src/lib/fsrs/**'], forbid: [restrictFirebase, restrictReact] },
+  {
+    files: ['src/services/firebase/**', 'src/repositories/firestore/**'],
+    forbid: [restrictTsFsrs, restrictReact],
+  },
+  {
+    files: ['src/lib/**', 'src/services/**', 'src/repositories/**'],
+    forbid: [restrictTsFsrs, restrictFirebase, restrictReact],
+  },
+  { files: ['src/**', 'tests/**'], forbid: [restrictTsFsrs, restrictFirebase] },
+]
+
+/** 各ファイルに layerRules の最初に一致した制限だけが適用されるよう、前の層のパスを除外する */
+const layerConfigs = layerRules.map((layer, index) => ({
+  files: layer.files.map((pattern) => `${pattern.replace(/\/\*\*$/, '')}/**/*.{ts,tsx}`),
+  ignores: layerRules.slice(0, index).flatMap((previous) => previous.files),
+  rules: { 'no-restricted-imports': ['error', { patterns: layer.forbid }] },
+}))
 
 export default defineConfig([
   globalIgnores(['dist', 'coverage', 'node_modules']),
@@ -52,20 +81,15 @@ export default defineConfig([
     languageOptions: { globals: globals.node },
   },
 
-  // import 制限：既定ではどちらも禁止
+  ...layerConfigs,
+  // domain のテストは vitest とテスト用ヘルパーを import してよい（React・ts-fsrs・Firebase は禁止のまま）
   {
-    files: ['src/**/*.{ts,tsx}', 'tests/**/*.ts'],
-    ignores: [...FSRS_DIRS, ...FIREBASE_DIRS],
-    rules: { 'no-restricted-imports': restrictImports(restrictTsFsrs, restrictFirebase) },
-  },
-  // src/lib/fsrs/ は ts-fsrs のみ許可
-  {
-    files: FSRS_DIRS,
-    rules: { 'no-restricted-imports': restrictImports(restrictFirebase) },
-  },
-  // Firebase 層は Firebase SDK のみ許可
-  {
-    files: FIREBASE_DIRS,
-    rules: { 'no-restricted-imports': restrictImports(restrictTsFsrs) },
+    files: ['src/domain/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { patterns: [restrictTsFsrs, restrictFirebase, restrictReact] },
+      ],
+    },
   },
 ])

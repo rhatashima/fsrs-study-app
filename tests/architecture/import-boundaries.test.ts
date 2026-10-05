@@ -49,6 +49,46 @@ describe('import boundaries', () => {
     },
   )
 
+  describe('src/domain/ は純粋な TypeScript のみ', () => {
+    it.each([
+      ["import { useState } from 'react'"],
+      ["import { Link } from 'react-router'"],
+      ["import { fsrs } from 'ts-fsrs'"],
+      ["import { getFirestore } from 'firebase/firestore'"],
+      ["import type { Repositories } from '../repositories/types'"],
+      ["import { x } from '../lib/fsrs/scheduler'"],
+    ])('%s は禁止', async (statement) => {
+      expect(await restrictedImportErrors('src/domain/card.ts', `${statement}\n`)).toHaveLength(1)
+    })
+
+    it('domain 内の相対 import は許可', async () => {
+      const code = "import type { Card } from './card'\nexport type X = Card\n"
+      expect(await restrictedImportErrors('src/domain/selection.ts', code)).toHaveLength(0)
+    })
+
+    it('domain のテストは vitest とテスト用ヘルパーを使えるが、React は禁止のまま', async () => {
+      const ok = "import { it } from 'vitest'\nimport { makeCard } from '../test/factories'\n"
+      expect(await restrictedImportErrors('src/domain/card.test.ts', ok)).toHaveLength(0)
+      const ng = "import { useState } from 'react'\n"
+      expect(await restrictedImportErrors('src/domain/card.test.ts', ng)).toHaveLength(1)
+    })
+  })
+
+  it.each([
+    ['src/services/studyQueue.ts'],
+    ['src/repositories/memory/createMemoryRepositories.ts'],
+    ['src/lib/fsrs/scheduler.ts'],
+  ])('%s から React を import できない', async (file) => {
+    const code = "import { useState } from 'react'\nexport const s = useState\n"
+    expect(await restrictedImportErrors(file, code)).toHaveLength(1)
+  })
+
+  it('画面（pages）からは React と domain を import できる', async () => {
+    const code =
+      "import { useState } from 'react'\nimport { isDue } from '../domain'\nexport const s = [useState, isDue]\n"
+    expect(await restrictedImportErrors('src/pages/HomePage.tsx', code)).toHaveLength(0)
+  })
+
   it('@firebase/* のサブパッケージも制限される', async () => {
     const code = "import { initializeApp } from '@firebase/app'\nexport const app = initializeApp({})\n"
     expect(await restrictedImportErrors('src/pages/HomePage.tsx', code)).toHaveLength(1)
