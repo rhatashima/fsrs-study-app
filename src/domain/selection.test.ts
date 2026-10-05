@@ -48,26 +48,27 @@ describe('selectNewCards（新規カードの取り出し）', () => {
   })
 })
 
-describe('selectDueStates（期限到来カードの取り出し）', () => {
-  const now = hoursAfter(T0, 48)
+describe('selectDueStates（期限が指定日時より前のカードの取り出し）', () => {
+  const dueBefore = hoursAfter(T0, 48)
   const states = [
     makeState({ cardId: 'late', due: hoursAfter(T0, 40) }),
     makeState({ cardId: 'early', due: hoursAfter(T0, 10) }),
+    makeState({ cardId: 'boundary', due: dueBefore }),
     makeState({ cardId: 'future', due: hoursAfter(T0, 50) }),
     makeState({ cardId: 'suspended', due: hoursAfter(T0, 1), suspended: true }),
     makeState({ cardId: 'other', due: hoursAfter(T0, 1), materialId: 'm2' }),
   ]
 
-  it('期限が来たものを期限の早い順に返す（未来・一時停止・他教材は除く）', () => {
-    expect(selectDueStates(states, { materialId: 'm1', now }).map((s) => s.cardId)).toEqual([
+  it('期限の早い順に返す（境界ちょうど・未来・一時停止・他教材は除く）', () => {
+    expect(selectDueStates(states, { materialId: 'm1', dueBefore }).map((s) => s.cardId)).toEqual([
       'early',
       'late',
     ])
   })
 
   it('limit 件まで返す', () => {
-    expect(selectDueStates(states, { materialId: 'm1', now, limit: 1 }).map((s) => s.cardId)).toEqual([
-      'early',
-    ])
+    expect(
+      selectDueStates(states, { materialId: 'm1', dueBefore, limit: 1 }).map((s) => s.cardId),
+    ).toEqual(['early'])
   })
 })

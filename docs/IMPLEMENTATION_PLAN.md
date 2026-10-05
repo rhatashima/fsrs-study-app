@@ -1,6 +1,6 @@
 # 実装計画 (IMPLEMENTATION_PLAN)
 
-最終更新: 2026-10-05 / Phase 2
+最終更新: 2026-10-05 / Phase 3
 
 ## 1. 当初案からの変更点と理由
 
@@ -49,13 +49,14 @@
 - 教材画面にメモリ上の教材名とカード数を表示（動作確認用の最小限の接続）。
 - CSV / JSON のサンプルファイル（`samples/`）は、インポート形式を実装する Phase 6 で作成する。
 
-### Phase 3：ローカル FSRS 学習フロー（branch: `feature/fsrs-review`）
-- `lib/fsrs/`：ts-fsrs ラッパー、間隔ラベル（「10分」「3日」「2か月」）。
-- `services/reviewService.ts`、`services/studyQueue.ts`。
-- ホーム（復習数・新規数・開始ボタン）と学習画面（答えを見る → 4 ボタン + 次回予定）。画像表示と読み込み失敗時の代替表示。
-- この段階はインメモリリポジトリ（＋必要なら localStorage）で動作。
-- テスト：スケジュール計算、ReviewState 更新、ReviewLog 生成（`nextState` と ReviewState の一致、`previousState` と前回 `nextState` の一致）、SchedulerConfig の id が設定ごとに決まること、新規カード判定、期限到来判定、新規上限、集計の増分、学習ステップの再出題、FSRS 状態欠落時のスナップショット復元。
-- コミット例：`feat: add ts-fsrs scheduler wrapper`, `feat: add study queue and review service`, `feat: add home and study screens`, `test: add FSRS scheduling tests`
+### Phase 3：FSRS 学習フロー（branch: `feature/fsrs-review`）✅
+- ts-fsrs 5.4.2 を導入（バージョン固定）。`src/lib/fsrs/`：アダプター（ドメイン型 ↔ ts-fsrs）とスケジューラー（preview / apply、SchedulerConfig の生成）。
+- FSRS の初期設定をアプリ側で明示（`DEFAULT_FSRS_SETTINGS`）。正規化後の値を SchedulerConfig に記録。
+- `src/domain/studyQueue.ts`：Learning（due <= now）・Review（学習日内、上限なし）・New（order 順、1 日の上限）のキュー。学習日の終わり（`studyDayEnd`、4:00 区切り）。
+- `src/services/`：`reviewCard`（ReviewState・ReviewLog・集計用情報の組み立て）、`startStudySession` / `submitReview` / `loadStudyOverview`。
+- 学習画面（問題 → 答えを見る → 4 評価 + 次回予定 → 次の問題、画像と代替表示、完了画面と「次の復習まであと○分」）とホーム画面（教材・今日の復習・学習中・新規・開始ボタン）。
+- データはメモリ上のみ（再読み込みで消える。localStorage には保存しない）。
+- FSRS 状態欠落時の復元（最新 ReviewLog の `nextState` から）は、Firestore のデータ検証と合わせて Phase 5 で実装する（メモリ実装では状態が壊れる経路がないため）。
 
 ### Phase 4：Firebase Authentication（branch: `feature/firebase-auth`）
 - **利用者の作業が必要**：Firebase プロジェクト作成（Spark）、Web アプリ登録、Google ログイン有効化、`.env.local` 作成。手順は README に書く。
@@ -133,15 +134,18 @@ git push origin --delete docs/initial-design   # 任意：リモートのブラ�
 | 問題の難易度 | `Card.examDifficulty`：1〜5 の整数、任意 | 2026-10-04 |
 | 重要度 | `Card.importance`：1〜5 の整数、任意 | 2026-10-04 |
 | FSRS 内部の difficulty | `ReviewState.difficulty`（Card 側とは別名で区別） | 2026-10-04 |
+| ts-fsrs のバージョン | 5.4.2（固定） | 2026-10-05 |
+| FSRS の初期設定 | retention 0.9 / 最大間隔 36500 日 / fuzz あり / short term あり / 学習ステップ 1m・10m / 再学習ステップ 10m | 2026-10-05 |
+| 1 日の区切り時刻 | 4:00（`AppSettings.dayStartHour`） | 2026-10-05 |
+| 今日の復習の判定 | Review は学習日の終わりまでに期限が来るもの。Learning / Relearning は due <= now のもの | 2026-10-05 |
+| 復習の 1 日上限 | 設けない（新規のみ `newCardsPerDay` で制限） | 2026-10-05 |
 
 ## 6. 未決定事項（推奨案で進め、必要なら変更）
 
 | # | 事項 | 推奨 | 期限 |
 |---|---|---|---|
 | 1 | Owner UID を Git に含めるか | 含めない（テンプレート + 生成スクリプト） | Phase 5 |
-| 2 | 画像の置き場所 | 外部 URL と `public/images/` の併用。配信 URL は誰でもアクセスできる点に注意 | Phase 3 |
-| 3 | 新規カードの出題順 | インポート順（将来：重要度順・ランダムを設定で選択） | Phase 3 |
-| 4 | 1 日の区切り時刻 | 4:00 | Phase 3 |
-| 5 | 学習ステップ | ts-fsrs の既定値（`1m`, `10m`） | Phase 3 |
-| 6 | 問題文の書式 | プレーンテキスト（改行のみ）。将来必要なら簡易 Markdown | Phase 3 |
-| 7 | GitHub Actions による CI | Phase 10 で導入（private リポジトリは月 2,000 分まで無料） | Phase 10 |
+| 2 | 画像の置き場所 | 外部 URL と `public/images/` の併用。配信 URL は誰でもアクセスできる点に注意 | Phase 6 |
+| 3 | 新規カードの出題順 | インポート順（現在の実装。将来：重要度順・ランダムを設定で選択） | Phase 7 |
+| 4 | 問題文の書式 | プレーンテキスト（改行のみ。現在の実装）。将来必要なら簡易 Markdown | Phase 6 |
+| 5 | GitHub Actions による CI | Phase 10 で導入（private リポジトリは月 2,000 分まで無料） | Phase 10 |

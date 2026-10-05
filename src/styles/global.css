@@ -6,6 +6,10 @@
   --color-border: #dfe1e6;
   --color-accent: #2f5bd3;
   --color-accent-text: #ffffff;
+  --color-again: #c2410c;
+  --color-hard: #a16207;
+  --color-good: #15803d;
+  --color-easy: #1d4ed8;
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -38,6 +42,10 @@
     --color-border: #353943;
     --color-accent: #7c9cf0;
     --color-accent-text: #10131a;
+    --color-again: #fb923c;
+    --color-hard: #facc15;
+    --color-good: #4ade80;
+    --color-easy: #93c5fd;
   }
 }
 

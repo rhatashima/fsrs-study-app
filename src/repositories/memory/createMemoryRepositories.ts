@@ -5,6 +5,7 @@ import {
   emptyProgress,
   isValidCardId,
   rebuildProgress,
+  sameSchedulerConfig,
   selectDueStates,
   selectNewCards,
   snapshotsEqual,
@@ -183,10 +184,10 @@ export function createMemoryRepositories(
           return state ? [copy(state)] : []
         })
       }),
-    listDue: (materialId, { now, limit }) =>
-      run(() => selectDueStates(valuesOf(store.states, materialId), { materialId, now, limit }).map(copy)),
-    countDue: (materialId, now) =>
-      run(() => selectDueStates(valuesOf(store.states, materialId), { materialId, now }).length),
+    listDue: (materialId, { dueBefore, limit }) =>
+      run(() =>
+        selectDueStates(valuesOf(store.states, materialId), { materialId, dueBefore, limit }).map(copy),
+      ),
     recordReview: (record) =>
       run(() => {
         // 検証がすべて通ってから 3 つを更新する（アトミック）
@@ -225,7 +226,7 @@ export function createMemoryRepositories(
         const existing = store.schedulerConfigs.get(config.id)
         if (!existing) {
           store.schedulerConfigs.set(config.id, copy(config))
-        } else if (JSON.stringify(existing) !== JSON.stringify(config)) {
+        } else if (!sameSchedulerConfig(existing, config)) {
           throw new AppError('conflict', `FSRS 設定の記録（${config.id}）は変更できません。`)
         }
       }),

@@ -1,6 +1,6 @@
 # データモデル (DATA_MODEL)
 
-最終更新: 2026-10-05 / Phase 2
+最終更新: 2026-10-05 / Phase 3
 対象 ts-fsrs バージョン: 5.4.2
 
 ## 0. 設計の原則
@@ -31,7 +31,7 @@ users/{uid}
 型の正本は `src/domain/` のコード。ここでは意味と制約を説明する。
 
 - 日時はアプリ内では標準の `Date`。Firestore の `Timestamp` との変換は Phase 5 の Firestore リポジトリの converter で行う。
-- **ドメイン型は ts-fsrs に依存しない。** 評価・学習段階・FSRS の状態はアプリ側の型で表し、ts-fsrs の型（`Card`, `Rating`, `State` など）との変換は `src/lib/fsrs/` のアダプター（Phase 3）が行う。
+- **ドメイン型は ts-fsrs に依存しない。** 評価・学習段階・FSRS の状態はアプリ側の型で表し、ts-fsrs の型（`Card`, `Rating`, `State` など）との変換は `src/lib/fsrs/` のアダプターが行う（ts-fsrs 5.4.2）。
 - Firestore にはドメイン型のフィールド名（camelCase）のまま保存する。
 
 ### StudyMaterial（`src/domain/material.ts`）
@@ -202,22 +202,26 @@ interface MaterialProgress {
 | dayStartHour | 0〜23 | 4 | 「今日」の区切り |
 | requestRetention | number | 0.9 | 目標保持率 |
 | maximumInterval | number | 36500 | 最大間隔（日） |
-| enableFuzz | boolean | true | |
-| fsrsWeights | number[] \| null | null | null ならライブラリの既定値 |
-| learningSteps / relearningSteps | StepDuration[] \| null | null | null ならライブラリの既定値 |
+| enableFuzz | boolean | true | ts-fsrs の既定値（false）とは異なるため明示 |
+| enableShortTerm | boolean | true | 学習ステップ（分・時間単位の再出題）を使う |
+| learningSteps | StepDuration[] | ['1m', '10m'] | |
+| relearningSteps | StepDuration[] | ['10m'] | |
+| fsrsWeights | number[] \| null | null | null なら ts-fsrs 既定の重み（将来の最適化結果を保存） |
 | activeSchedulerConfigId | string \| null | null | |
 | lastMaterialId | string \| null | null | |
 | updatedAt | Date | | |
 
-FSRS パラメータは全教材共通。新規カード数のみ教材ごと。null の項目の既定値は `src/lib/fsrs/` が ts-fsrs から解決する（ドメイン層はライブラリの既定値を知らない）。
+FSRS パラメータは全教材共通。新規カード数のみ教材ごと。初期値は `DEFAULT_FSRS_SETTINGS` としてアプリ側で明示し、ライブラリの暗黙の既定値に頼らない（例外は重みの null）。ts-fsrs が正規化した後の実際の値は SchedulerConfig に記録される。
+
+既存データに `enableShortTerm` などがない場合（将来 Firestore から古い設定を読んだ場合）は、Phase 5 の converter で初期値を補う。
 
 ## 3. 画面ごとの読み取り
 
 | 場面 | クエリ | 読み取り数の目安 |
 |---|---|---|
 | 起動 | `settings/app`、教材一覧 | 1 + 教材数 |
-| ホーム | `progress/summary` 1 件、期限カード数は `count()` 集計（`suspended == false && due <= 今日の終わり`） | 2〜3 |
-| 学習開始：復習 | `reviewStates where suspended == false && due <= 今 orderBy due limit 100`、対応する Card を id で取得（`in` 最大 30 件ずつ） | 期限カード数 × 2 |
+| ホーム | `progress/summary` 1 件 + `reviewStates where suspended == false && due < 学習日の終わり`（Review / 学習中を区別して数えるため状態を取得） | 1 + 今日の期限カード数 |
+| 学習開始：復習・学習中 | `reviewStates where suspended == false && due < 学習日の終わり orderBy due`（Review の 1 日の上限なし）、対応する Card を id で取得（`in` 最大 30 件ずつ） | 期限カード数 × 2 |
 | 学習開始：新規 | `cards where isArchived == false && order > newCursorOrder orderBy order limit (残り新規数)`、念のため対応 ReviewState の有無を id で確認 | 新規数 × 2 程度 |
 | 1 レビュー保存 | batch：ReviewState set + ReviewLog create + progress increment | 書き込み 3 |
 | 統計 | `progress/summary` 1 件 | 1 |

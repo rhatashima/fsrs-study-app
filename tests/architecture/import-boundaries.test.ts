@@ -89,6 +89,25 @@ describe('import boundaries', () => {
     expect(await restrictedImportErrors('src/pages/HomePage.tsx', code)).toHaveLength(0)
   })
 
+  describe('src/lib/fsrs/ の外からは公開 API（index）だけを使う', () => {
+    it.each([['src/services/studyService.ts'], ['src/hooks/useStudySession.ts'], ['src/pages/StudyPage.tsx']])(
+      '%s から lib/fsrs は import できるが、内部ファイル（adapter）は import できない',
+      async (file) => {
+        const depth = file.split('/').length - 2
+        const prefix = '../'.repeat(depth)
+        const ok = `import { createFsrsScheduler } from '${prefix}lib/fsrs'\n`
+        const ng = `import { toFsrsCard } from '${prefix}lib/fsrs/adapter'\n`
+        expect(await restrictedImportErrors(file, ok)).toHaveLength(0)
+        expect(await restrictedImportErrors(file, ng)).toHaveLength(1)
+      },
+    )
+
+    it('src/lib/fsrs/ の中では内部ファイルを import できる', async () => {
+      const code = "import { toFsrsCard } from './adapter'\n"
+      expect(await restrictedImportErrors('src/lib/fsrs/scheduler.ts', code)).toHaveLength(0)
+    })
+  })
+
   it('@firebase/* のサブパッケージも制限される', async () => {
     const code = "import { initializeApp } from '@firebase/app'\nexport const app = initializeApp({})\n"
     expect(await restrictedImportErrors('src/pages/HomePage.tsx', code)).toHaveLength(1)

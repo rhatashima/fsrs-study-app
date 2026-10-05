@@ -23,6 +23,11 @@ const restrictFirebase = {
   message:
     'Firebase SDK は src/services/firebase/ と src/repositories/firestore/ からのみ import してください（ARCHITECTURE.md 参照）。',
 }
+const restrictFsrsInternals = {
+  // src/lib/fsrs/ の外からは公開 API（src/lib/fsrs/index.ts）だけを使う
+  group: ['**/lib/fsrs/*'],
+  message: 'src/lib/fsrs/ の内部ファイルではなく、公開 API（lib/fsrs）を import してください。',
+}
 const restrictReact = {
   group: ['react', 'react/*', 'react-dom', 'react-dom/*', 'react-router', 'react-router/*'],
   message: 'このレイヤーは React に依存させないでください（ARCHITECTURE.md 参照）。',
@@ -38,13 +43,16 @@ const layerRules = [
   { files: ['src/lib/fsrs/**'], forbid: [restrictFirebase, restrictReact] },
   {
     files: ['src/services/firebase/**', 'src/repositories/firestore/**'],
-    forbid: [restrictTsFsrs, restrictReact],
+    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictReact],
   },
   {
     files: ['src/lib/**', 'src/services/**', 'src/repositories/**'],
-    forbid: [restrictTsFsrs, restrictFirebase, restrictReact],
+    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase, restrictReact],
   },
-  { files: ['src/**', 'tests/**'], forbid: [restrictTsFsrs, restrictFirebase] },
+  {
+    files: ['src/**', 'tests/**'],
+    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase],
+  },
 ]
 
 /** 各ファイルに layerRules の最初に一致した制限だけが適用されるよう、前の層のパスを除外する */

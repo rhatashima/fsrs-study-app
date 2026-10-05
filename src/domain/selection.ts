@@ -1,5 +1,5 @@
 import type { Card } from './card'
-import { isDue, type ReviewState } from './review'
+import type { ReviewState } from './review'
 
 export function belongsToMaterial<T extends { materialId: string }>(item: T, materialId: string): boolean {
   return item.materialId === materialId
@@ -28,14 +28,23 @@ export function selectNewCards(
     .slice(0, limit)
 }
 
-/** 期限が来た ReviewState を期限の早い順に取り出す */
+/**
+ * 期限が dueBefore より前の ReviewState（一時停止中を除く）を期限の早い順に取り出す。
+ * 学習セッションでは dueBefore = 学習日の終わり とし、取り出した後で
+ * Review（今日中なら出題）と Learning / Relearning（due <= now のみ出題）を studyQueue で振り分ける。
+ */
 export function selectDueStates(
   states: readonly ReviewState[],
-  options: { materialId: string; now: Date; limit?: number },
+  options: { materialId: string; dueBefore: Date; limit?: number },
 ): ReviewState[] {
-  const { materialId, now, limit } = options
+  const { materialId, dueBefore, limit } = options
   const due = states
-    .filter((state) => belongsToMaterial(state, materialId) && isDue(state, now))
+    .filter(
+      (state) =>
+        belongsToMaterial(state, materialId) &&
+        !state.suspended &&
+        state.due.getTime() < dueBefore.getTime(),
+    )
     .sort((a, b) => a.due.getTime() - b.due.getTime() || a.cardId.localeCompare(b.cardId))
   return limit === undefined ? due : due.slice(0, Math.max(0, limit))
 }

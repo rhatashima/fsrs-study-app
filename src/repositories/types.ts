@@ -52,9 +52,12 @@ export interface ReviewRecord {
 export interface ReviewRepository {
   /** 指定カードの ReviewState（未学習のカードは結果に含まれない） */
   getStates(materialId: string, cardIds: readonly string[]): Promise<ReviewState[]>
-  /** 期限が来た（due <= now、一時停止でない）ReviewState を期限の早い順に limit 件 */
-  listDue(materialId: string, options: { now: Date; limit: number }): Promise<ReviewState[]>
-  countDue(materialId: string, now: Date): Promise<number>
+  /**
+   * 期限が dueBefore より前（一時停止でない）の ReviewState を期限の早い順に返す。
+   * 学習セッションでは dueBefore = 学習日の終わり。limit 省略時は全件
+   * （Review の 1 日の上限は設けないため。取得件数は「今日の学習量」に比例する）。
+   */
+  listDue(materialId: string, options: { dueBefore: Date; limit?: number }): Promise<ReviewState[]>
   /** ReviewState の保存・ReviewLog の追記・集計の加算をすべて行うか、何も行わない */
   recordReview(record: ReviewRecord): Promise<void>
   /** カードの ReviewLog を新しい順に limit 件（状態の復元・監査用） */
@@ -68,7 +71,7 @@ export interface SettingsRepository {
   getSettings(): Promise<AppSettings>
   saveSettings(settings: AppSettings): Promise<void>
   getSchedulerConfig(configId: string): Promise<SchedulerConfig | null>
-  /** 作成のみ（不変）。同じ id・同じ内容なら何もしない。同じ id で内容が違えば conflict */
+  /** 作成のみ（不変）。同じ id・同じ内容（作成日時以外）なら何もしない。同じ id で内容が違えば conflict */
   saveSchedulerConfig(config: SchedulerConfig): Promise<void>
 }
 

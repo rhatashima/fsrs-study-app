@@ -134,7 +134,7 @@ describe('ReviewRepository', () => {
     expect(progress.ratingCounts).toMatchObject({ good: 1, again: 1 })
   })
 
-  it('期限が来たカードだけを期限順に返し、件数も数える', async () => {
+  it('期限が指定日時より前のカードだけを期限順に返す', async () => {
     const repos = setup()
     await repos.reviews.recordReview(
       makeReviewRecord({ cardId: 'c1', logId: 'l1', next: { due: hoursAfter(T0, 30) } }),
@@ -145,17 +145,17 @@ describe('ReviewRepository', () => {
     await repos.reviews.recordReview(
       makeReviewRecord({ cardId: 'c3', logId: 'l3', next: { due: hoursAfter(T0, 100) } }),
     )
-    const now = hoursAfter(T0, 48)
-    expect((await repos.reviews.listDue('m1', { now, limit: 10 })).map((s) => s.cardId)).toEqual(['c2', 'c1'])
-    expect(await repos.reviews.countDue('m1', now)).toBe(2)
-    expect(await repos.reviews.countDue('m2', now)).toBe(0)
+    const dueBefore = hoursAfter(T0, 48)
+    expect((await repos.reviews.listDue('m1', { dueBefore })).map((s) => s.cardId)).toEqual(['c2', 'c1'])
+    expect((await repos.reviews.listDue('m1', { dueBefore, limit: 1 })).map((s) => s.cardId)).toEqual(['c2'])
+    expect(await repos.reviews.listDue('m2', { dueBefore })).toEqual([])
   })
 
   describe('ReviewLog は追記のみ', () => {
     it('既存の ReviewLog を変更・削除するメソッドがない', () => {
       // 型レベルの確認：メソッドを追加したらこのテストの更新（＝設計の見直し）が必要になる
       expectTypeOf<keyof ReviewRepository>().toEqualTypeOf<
-        'getStates' | 'listDue' | 'countDue' | 'recordReview' | 'listLogsForCard' | 'getProgress'
+        'getStates' | 'listDue' | 'recordReview' | 'listLogsForCard' | 'getProgress'
       >()
     })
 

@@ -1,0 +1,57 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  min-height: 4.5rem;
+  padding: var(--space-2) var(--space-1);
+  border: 2px solid var(--rating-color);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.interval {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.label {
+  font-weight: 700;
+  color: var(--rating-color);
+}
+
+.sub {
+  font-size: 0.6875rem;
+  color: var(--color-text-muted);
+}
+
+.again {
+  --rating-color: var(--color-again);
+}
+
+.hard {
+  --rating-color: var(--color-hard);
+}
+
+.good {
+  --rating-color: var(--color-good);
+}
+
+.easy {
+  --rating-color: var(--color-easy);
+}

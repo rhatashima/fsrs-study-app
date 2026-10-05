@@ -40,7 +40,10 @@ npm run build
 ## アーキテクチャのルール
 
 - 依存方向：`pages/components/hooks → services → lib/fsrs, repositories(interface) → domain`。
-- **`ts-fsrs` を import してよいのは `src/lib/fsrs/` だけ。**
+- **`ts-fsrs` を import してよいのは `src/lib/fsrs/` だけ。** 外からは `src/lib/fsrs/index.ts`（公開 API）だけを使う。ts-fsrs の型・enum を外に出さない。
+- ts-fsrs のバージョンは 5.4.2 に固定している。上げる場合は利用者に確認し、`scheduler.test.ts` のバージョン確認テストと docs を更新する（SchedulerConfig の id が変わり、新しい設定記録が作られる）。
+- 正式なレビュー日時は「評価ボタンを押した時刻」。次回予定の preview は参考値で、保存時にその時刻で計算し直す。
+- 時刻に依存する処理は `now` を引数で受け取る（UI では `useClock()`）。`new Date()` を services / domain 内で直接呼ばない。
 - **`firebase/*` を import してよいのは `src/services/firebase/` と `src/repositories/firestore/` だけ。**
 - `src/domain/` は同じディレクトリ内のファイル以外を import しない純粋な TypeScript にする（ts-fsrs・Firebase・React の型も使わない。日時は `Date`）。`lib/`・`services/`・`repositories/` も React に依存させない。これらは ESLint で強制している。
 - 評価は `ReviewRating`（'again' | 'hard' | 'good' | 'easy'）、FSRS の状態は `SchedulingSnapshot` などのドメイン型で扱う。ts-fsrs の型・enum との変換は `src/lib/fsrs/` だけで行う。
@@ -85,7 +88,7 @@ npm run build
 
 - FSRS 関連（スケジュール計算、ReviewState 更新、ReviewLog 生成、新規/期限判定、学習キュー）には必ずユニットテストを書く。
 - インポート（CSV/JSON パース、検証、重複、更新時の履歴保持）にもテストを書く。
-- 時刻に依存するテストは `now` を引数で渡す（`Date.now()` を services 内で直接呼ばない）。
+- 時刻に依存するテストは固定日時を注入する（services には `now` を渡し、画面のテストは `src/test/renderApp.tsx` の `createTestClock` を使う）。
 
 ## ドキュメント
 

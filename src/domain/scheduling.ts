@@ -101,6 +101,16 @@ export interface SchedulerRef {
   readonly libraryVersion: string
 }
 
+/** 同じ設定の記録か（作成日時は比較しない） */
+export function sameSchedulerConfig(a: SchedulerConfig, b: SchedulerConfig): boolean {
+  return (
+    a.id === b.id &&
+    a.library === b.library &&
+    a.libraryVersion === b.libraryVersion &&
+    JSON.stringify(a.params) === JSON.stringify(b.params)
+  )
+}
+
 export function toSchedulerRef(config: SchedulerConfig): SchedulerRef {
   return { configId: config.id, library: config.library, libraryVersion: config.libraryVersion }
 }

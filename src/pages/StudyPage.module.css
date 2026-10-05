@@ -1,0 +1,42 @@
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.kind {
+  align-self: flex-start;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* 片手で押せるよう、ボタンは画面下部（タブバーのすぐ上）に固定 */
+.actions {
+  position: sticky;
+  bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom) + var(--space-2));
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-2);
+  background: var(--color-bg);
+}
+
+.actions > button {
+  min-height: 3.5rem;
+}
+
+@media (min-width: 48rem) {
+  .actions {
+    bottom: var(--space-4);
+  }
+}
+
+.summary {
+  margin: 0;
+  padding-left: 1.25rem;
+}
