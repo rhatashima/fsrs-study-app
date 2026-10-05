@@ -108,6 +108,28 @@ describe('import boundaries', () => {
     })
   })
 
+  describe('Firebase を使う自前のモジュール（src/services/firebase/）', () => {
+    const code = "import { createFirebaseAuthGateway } from './services/firebase/auth'\n"
+
+    it('src/main.tsx（アプリの組み立て）からは import できる', async () => {
+      expect(await restrictedImportErrors('src/main.tsx', code)).toHaveLength(0)
+    })
+
+    it.each([
+      ['src/pages/LoginPage.tsx', "import { toAppUser } from '../services/firebase/auth'\n"],
+      ['src/app/AuthProvider.tsx', "import { getFirebaseApp } from '../services/firebase/app'\n"],
+      ['src/services/auth/signInMethod.ts', "import { toAuthAppError } from '../firebase/authErrors'\n"],
+    ])('%s からは import できない（interface 経由で使う）', async (file, statement) => {
+      expect(await restrictedImportErrors(file, statement)).toHaveLength(1)
+    })
+
+    it('Firebase SDK はパッケージ名だけで判定する（自前の services/firebase/ への相対パスは SDK 扱いしない）', async () => {
+      const errors = await restrictedImportErrors('src/main.tsx', `${code}import { getAuth } from 'firebase/auth'\n`)
+      expect(errors).toHaveLength(1)
+      expect(errors[0]?.message).toContain('Firebase SDK')
+    })
+  })
+
   it('@firebase/* のサブパッケージも制限される', async () => {
     const code = "import { initializeApp } from '@firebase/app'\nexport const app = initializeApp({})\n"
     expect(await restrictedImportErrors('src/pages/HomePage.tsx', code)).toHaveLength(1)

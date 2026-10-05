@@ -1,6 +1,6 @@
 # アーキテクチャ (ARCHITECTURE)
 
-最終更新: 2026-10-05 / Phase 3
+最終更新: 2026-10-05 / Phase 4
 
 ## 1. 全体像
 
@@ -73,7 +73,7 @@ fsrs-study-app/
 ├─ firestore.rules.template   Security Rules（Owner UID はプレースホルダ）
 ├─ firestore.indexes.json
 ├─ scripts/
-│   └─ build-rules.mjs        .env.local の OWNER_UID から firestore.rules を生成（生成物は gitignore）
+│   └─ build-rules.mjs        .env.local の VITE_OWNER_UID から firestore.rules を生成（生成物は gitignore）
 ├─ public/
 │   ├─ icons/                 PWA アイコン
 │   └─ images/                画像付きカード用（任意）
@@ -125,6 +125,7 @@ fsrs-study-app/
 | CSV | papaparse | 引用符・改行入り CSV を正しく扱うため自前実装しない |
 | PWA | vite-plugin-pwa | manifest / Service Worker 生成 |
 | テスト | Vitest 5, jsdom, @testing-library/react, @testing-library/user-event | Vite と統合。設定は `vitest.config.ts` |
+| Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ |
 | Rules テスト | @firebase/rules-unit-testing + Firestore Emulator | Java が必要なため `npm test` とは別コマンド |
 | Lint | ESLint 10 (flat config) + typescript-eslint（型情報を使う推奨ルール） | `no-restricted-imports` でレイヤー間の import を制限。制限が働くことは `tests/architecture/import-boundaries.test.ts` で確認 |
 
@@ -233,9 +234,46 @@ loadStudyOverview(repos, materialId, now): { material, counts }   // ホーム�
 
 ## 6. 認証とアクセス制御
 
-- Google ログイン：`signInWithPopup` を基本とし、スマホ・PWA（standalone）では `signInWithRedirect` を使う。Firebase Hosting 上で配信し `authDomain` を Hosting ドメインに合わせることで、リダイレクト方式のサードパーティ Cookie 問題を避ける。
-- データは `users/{uid}/...` 配下に置き、Security Rules で `request.auth.uid == uid` **かつ** `uid == OWNER_UID` の場合のみ許可。
-- `OWNER_UID` は Git にコミットしない方針とし、`firestore.rules.template` から `scripts/build-rules.mjs` が `.env.local` の値で `firestore.rules` を生成してデプロイする（UID は認証情報ではないが、個人を特定する値を公開リポジトリに残さないため）。
+### 構成（Phase 4）
+
+```
+main.tsx（組み立て）
+  ├─ services/firebase/config.ts   readFirebaseConfig(import.meta.env)：不足時は変数名だけを返す → ConfigErrorPage
+  ├─ services/firebase/app.ts      getFirebaseApp(config)：初期化は 1 回だけ
+  └─ services/firebase/auth.ts     createFirebaseAuthGateway(app)：AuthGateway の Firebase 実装
+                                    （Firebase の User → AppUser、エラー → 日本語の AppError は authErrors.ts）
+app/AuthProvider.tsx   AuthGateway を購読し、認証状態を Context で配る（loading / unauthenticated / authorized / unauthorized）
+app/AuthGate.tsx       全画面（404 を含む）の手前で状態に応じて 確認中 / ログイン画面 / 権限なし画面 / アプリ を表示
+                       Owner のときだけ RepositoryFactory（利用者ごとのデータ層）でリポジトリを作る
+services/auth/         AppUser・AuthGateway（interface）、ログイン方式の判定、Owner 判定（Firebase に依存しない）
+```
+
+- 画面・フック・サービスは `AuthGateway` interface と `AppUser` だけを知り、Firebase の型や SDK を知らない。`src/services/firebase/` を import できるのは `src/main.tsx` だけ（ESLint で強制）。テストは偽の AuthGateway（`src/test/fakeAuth.ts`）を使い、Firebase と通信しない。
+- **ちらつき防止**：起動直後は Firebase から最初の認証状態が届くまで「確認中」だけを表示し、ログイン画面もアプリ画面も出さない。
+- **画面の保護**：未ログインならその URL のままログイン画面を表示する。ログインすると同じ URL の画面がそのまま表示される（リダイレクト方式でも元の URL に戻る）。
+- **データ層は利用者ごと**：Owner としてログインしたときに `RepositoryFactory(user)` でリポジトリを作り、利用者が変わる・ログアウトすると破棄する。Phase 4 まではメモリ上のダミーデータ、Phase 5 では `users/{uid}/...` の Firestore リポジトリになる。
+
+### ログイン方式（`services/auth/signInMethod.ts`。Firebase の呼び出しと分離した純粋関数）
+
+| 環境 | 方式 |
+|---|---|
+| localhost（ローカル開発） | `signInWithPopup`（リダイレクトに依存しない。ポップアップがブロックされても案内を出すだけ） |
+| PC ブラウザ | `signInWithPopup`（ブロックされたら `signInWithRedirect` でやり直す） |
+| ホーム画面の PWA（`display-mode: standalone` / iOS の `navigator.standalone`） | `signInWithRedirect` |
+| スマートフォン（`pointer: coarse` かつ `hover` なし） | `signInWithRedirect` |
+
+- User-Agent の解析はしない。
+- 本番の最初のアクセス先は `https://<project-id>.firebaseapp.com`（`authDomain` と同じドメイン）。リダイレクト方式でもサードパーティ Cookie 制限の影響を受けない。`web.app` やカスタムドメインを使う場合は `authDomain` などの追加設定が必要になることがある（README 参照）。
+
+### Owner 制限
+
+- `VITE_OWNER_UID` とログイン中の UID が一致すれば authorized、違えば unauthorized（「このアカウントには利用権限がありません」＋ログアウト）。未設定ならすべて unauthorized で、自分の UID と設定方法を表示する。
+- **この判定は画面上の制御（UX）であり、セキュリティの境界ではない。** 本当の境界は Phase 5 の Firestore Security Rules（下記）。
+
+### Firestore でのアクセス制御（Phase 5）
+
+- データは `users/{uid}/...` 配下に置き、Security Rules で `request.auth.uid == uid` **かつ** `uid == Owner の UID` の場合のみ許可。
+- Owner の UID はリポジトリにコミットしない方針とし、`firestore.rules.template` から `scripts/build-rules.mjs` が `.env.local` の `VITE_OWNER_UID` で `firestore.rules` を生成してデプロイする（UID は認証情報ではないが、個人を特定する値を公開リポジトリに残さないため。アプリ側と同じ値を 1 か所で管理する）。
 - ReviewLog は Rules で **create のみ許可（update / delete 禁止）**。Card / ReviewState / Material も delete 禁止（アーカイブで対応）。バグによる履歴破壊を Rules レベルで防ぐ。
 
 ## 7. エラー処理

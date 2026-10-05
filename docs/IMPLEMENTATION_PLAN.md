@@ -1,6 +1,6 @@
 # 実装計画 (IMPLEMENTATION_PLAN)
 
-最終更新: 2026-10-05 / Phase 3
+最終更新: 2026-10-05 / Phase 4
 
 ## 1. 当初案からの変更点と理由
 
@@ -58,13 +58,17 @@
 - データはメモリ上のみ（再読み込みで消える。localStorage には保存しない）。
 - FSRS 状態欠落時の復元（最新 ReviewLog の `nextState` から）は、Firestore のデータ検証と合わせて Phase 5 で実装する（メモリ実装では状態が壊れる経路がないため）。
 
-### Phase 4：Firebase Authentication（branch: `feature/firebase-auth`）
-- **利用者の作業が必要**：Firebase プロジェクト作成（Spark）、Web アプリ登録、Google ログイン有効化、`.env.local` 作成。手順は README に書く。
-- `services/firebase/`（初期化・Auth）、ログイン画面、AuthGate、ログイン失敗の日本語表示。
-- コミット例：`feat: add Firebase authentication`
+### Phase 4：Firebase Authentication（branch: `feature/firebase-auth`）✅
+- firebase 12.19.0 を導入（Authentication のみ使用。Firestore はまだ作成・使用しない）。
+- `src/services/firebase/`：設定の読み取り（不足時は変数名を表示）、初期化、AuthGateway の Firebase 実装、エラーの日本語化。
+- `src/services/auth/`：AppUser / AuthGateway の型、ログイン方式の判定（localhost・PC はポップアップ、スマホ・PWA はリダイレクト）、Owner 判定。
+- `AuthProvider`（Context）と `AuthGate`（全画面の保護）。ログイン・権限なし・設定不足の画面。設定画面からログアウト。
+- データ層を利用者ごとに作る `RepositoryFactory`（ログアウトで破棄）。メモリ上の学習機能はそのまま。
+- **利用者の作業**：Firebase プロジェクト作成、Web アプリ登録、Google ログイン有効化、`.env.local` の設定（README の手順）。
+- 注意：`npm audit` が firebase 内の `@grpc/grpc-js`（Firestore の Node.js 用通信部分）について high を報告する。ブラウザ版では使われない部分で、提示される修正は firebase 9 への格下げ（破壊的変更）のため適用しない。firebase の更新時に再確認する。
 
 ### Phase 5：Firestore 同期 + Security Rules（branch: `feature/firestore`）
-- **利用者の作業が必要**：Firestore データベース作成（ロケーション `asia-northeast1`）、自分の UID を `.env.local` の `OWNER_UID` に設定、Firebase CLI へのログイン。
+- **利用者の作業が必要**：Firestore データベース作成（ロケーション `asia-northeast1`）、Firebase CLI へのログイン（`VITE_OWNER_UID` は Phase 4 で設定済みのものを Rules の生成にも使う）。
 - `repositories/firestore/`（converter、zod 検証、batch 保存、`increment()` による集計、`count()` 集計）、`firestore.indexes.json`。
 - 保存状態表示（保存中 / 未保存 n 件 / 再試行）、`beforeunload` 警告。
 - `firebase.json`（Hosting は全パスを `/index.html` に rewrite して URL 直接アクセスに対応）。
@@ -139,13 +143,16 @@ git push origin --delete docs/initial-design   # 任意：リモートのブラ�
 | 1 日の区切り時刻 | 4:00（`AppSettings.dayStartHour`） | 2026-10-05 |
 | 今日の復習の判定 | Review は学習日の終わりまでに期限が来るもの。Learning / Relearning は due <= now のもの | 2026-10-05 |
 | 復習の 1 日上限 | 設けない（新規のみ `newCardsPerDay` で制限） | 2026-10-05 |
+| Firebase JS SDK のバージョン | 12.19.0（固定） | 2026-10-05 |
+| ログイン方式 | localhost・PC はポップアップ、スマホ・PWA はリダイレクト | 2026-10-05 |
+| 本番の最初のアクセス先 | `https://<project-id>.firebaseapp.com`（authDomain と同じ） | 2026-10-05 |
+| Owner の UID の管理 | `.env.local` の `VITE_OWNER_UID`（アプリと Rules の生成で共用。コミットしない） | 2026-10-05 |
 
 ## 6. 未決定事項（推奨案で進め、必要なら変更）
 
 | # | 事項 | 推奨 | 期限 |
 |---|---|---|---|
-| 1 | Owner UID を Git に含めるか | 含めない（テンプレート + 生成スクリプト） | Phase 5 |
-| 2 | 画像の置き場所 | 外部 URL と `public/images/` の併用。配信 URL は誰でもアクセスできる点に注意 | Phase 6 |
-| 3 | 新規カードの出題順 | インポート順（現在の実装。将来：重要度順・ランダムを設定で選択） | Phase 7 |
-| 4 | 問題文の書式 | プレーンテキスト（改行のみ。現在の実装）。将来必要なら簡易 Markdown | Phase 6 |
-| 5 | GitHub Actions による CI | Phase 10 で導入（private リポジトリは月 2,000 分まで無料） | Phase 10 |
+| 1 | 画像の置き場所 | 外部 URL と `public/images/` の併用。配信 URL は誰でもアクセスできる点に注意 | Phase 6 |
+| 2 | 新規カードの出題順 | インポート順（現在の実装。将来：重要度順・ランダムを設定で選択） | Phase 7 |
+| 3 | 問題文の書式 | プレーンテキスト（改行のみ。現在の実装）。将来必要なら簡易 Markdown | Phase 6 |
+| 4 | GitHub Actions による CI | Phase 10 で導入（private リポジトリは月 2,000 分まで無料） | Phase 10 |

@@ -10,16 +10,18 @@ import tseslint from 'typescript-eslint'
  *   - src/domain/ は純粋な TypeScript のみ（外部パッケージ・他のレイヤーを import しない）
  *   - ts-fsrs は src/lib/fsrs/ からのみ import できる
  *   - Firebase SDK は src/services/firebase/ と src/repositories/firestore/ からのみ import できる
+ *   - Firebase を使う自前のモジュール（src/services/firebase/）を組み立てるのは src/main.tsx だけ
  *   - domain / lib / services / repositories は React に依存しない
  * 対象パッケージが未インストールでも、import 文の記述だけで検出される。
  * 1 つのファイルには下の layerRules のうち最初に一致した 1 つだけを適用する。
  */
+// パッケージ名だけに一致させる（相対パス ./services/firebase/... などには一致させない）
 const restrictTsFsrs = {
-  group: ['ts-fsrs', 'ts-fsrs/*'],
+  regex: '^ts-fsrs(/|$)',
   message: 'ts-fsrs は src/lib/fsrs/ からのみ import してください（ARCHITECTURE.md 参照）。',
 }
 const restrictFirebase = {
-  group: ['firebase', 'firebase/*', '@firebase/*'],
+  regex: '^@?firebase(/|$)',
   message:
     'Firebase SDK は src/services/firebase/ と src/repositories/firestore/ からのみ import してください（ARCHITECTURE.md 参照）。',
 }
@@ -27,6 +29,12 @@ const restrictFsrsInternals = {
   // src/lib/fsrs/ の外からは公開 API（src/lib/fsrs/index.ts）だけを使う
   group: ['**/lib/fsrs/*'],
   message: 'src/lib/fsrs/ の内部ファイルではなく、公開 API（lib/fsrs）を import してください。',
+}
+const restrictFirebaseLayer = {
+  // 画面などは Firebase を直接知らない（AuthGateway / Repository の interface を使う）
+  // .../services/firebase/... と、src/services/ 内からの ../firebase/...
+  regex: '(^|/)services/firebase(/|$)|^\\.\\./firebase(/|$)',
+  message: 'src/services/firebase/ は src/main.tsx（アプリの組み立て）からのみ import してください（ARCHITECTURE.md 参照）。',
 }
 const restrictReact = {
   group: ['react', 'react/*', 'react-dom', 'react-dom/*', 'react-router', 'react-router/*'],
@@ -47,17 +55,20 @@ const layerRules = [
   },
   {
     files: ['src/lib/**', 'src/services/**', 'src/repositories/**'],
-    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase, restrictReact],
+    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase, restrictFirebaseLayer, restrictReact],
   },
+  { files: ['src/main.tsx'], forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase] },
   {
     files: ['src/**', 'tests/**'],
-    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase],
+    forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase, restrictFirebaseLayer],
   },
 ]
 
 /** 各ファイルに layerRules の最初に一致した制限だけが適用されるよう、前の層のパスを除外する */
 const layerConfigs = layerRules.map((layer, index) => ({
-  files: layer.files.map((pattern) => `${pattern.replace(/\/\*\*$/, '')}/**/*.{ts,tsx}`),
+  files: layer.files.map((pattern) =>
+    pattern.endsWith('/**') ? `${pattern.slice(0, -3)}/**/*.{ts,tsx}` : pattern,
+  ),
   ignores: layerRules.slice(0, index).flatMap((previous) => previous.files),
   rules: { 'no-restricted-imports': ['error', { patterns: layer.forbid }] },
 }))

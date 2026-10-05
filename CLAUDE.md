@@ -44,7 +44,9 @@ npm run build
 - ts-fsrs のバージョンは 5.4.2 に固定している。上げる場合は利用者に確認し、`scheduler.test.ts` のバージョン確認テストと docs を更新する（SchedulerConfig の id が変わり、新しい設定記録が作られる）。
 - 正式なレビュー日時は「評価ボタンを押した時刻」。次回予定の preview は参考値で、保存時にその時刻で計算し直す。
 - 時刻に依存する処理は `now` を引数で受け取る（UI では `useClock()`）。`new Date()` を services / domain 内で直接呼ばない。
-- **`firebase/*` を import してよいのは `src/services/firebase/` と `src/repositories/firestore/` だけ。**
+- **`firebase/*` を import してよいのは `src/services/firebase/` と `src/repositories/firestore/` だけ。** `src/services/firebase/` を import してよいのは `src/main.tsx`（アプリの組み立て）だけ。画面・フック・サービスは `AuthGateway` / `AppUser`（`src/services/auth/`）とリポジトリの interface を使う。
+- アプリ画面での Owner 判定は UX であり、セキュリティの境界ではない。データの保護は Firestore Security Rules で行う（Rules なしで Firestore を使わない）。
+- 認証まわりのテストは偽の AuthGateway（`src/test/fakeAuth.ts`）を使い、Firebase と実際に通信するテストを作らない。
 - `src/domain/` は同じディレクトリ内のファイル以外を import しない純粋な TypeScript にする（ts-fsrs・Firebase・React の型も使わない。日時は `Date`）。`lib/`・`services/`・`repositories/` も React に依存させない。これらは ESLint で強制している。
 - 評価は `ReviewRating`（'again' | 'hard' | 'good' | 'easy'）、FSRS の状態は `SchedulingSnapshot` などのドメイン型で扱う。ts-fsrs の型・enum との変換は `src/lib/fsrs/` だけで行う。
 - データ層は `src/repositories/types.ts` の interface 経由で使う。interface を変えたらメモリ実装とテストも合わせて更新する。
@@ -75,7 +77,8 @@ npm run build
 
 - `.env`, `.env.local`, `.env.*.local`、サービスアカウント JSON、秘密鍵、トークンをコミットしない。
 - 環境変数を追加したら `.env.example` にキー名だけ追記する（値は書かない）。
-- `firestore.rules` は `.env.local` の `OWNER_UID` から生成する生成物でありコミットしない。編集するのは `firestore.rules.template`。
+- `firestore.rules` は `.env.local` の `VITE_OWNER_UID` から生成する生成物でありコミットしない。編集するのは `firestore.rules.template`。
+- `.env.local` の値（Firebase の設定・UID）をログ・コミット・報告に出力しない。必要なら変数名だけを扱う。
 - コミット前に `git diff --staged` で秘密情報が含まれていないか確認する。
 
 ## Git

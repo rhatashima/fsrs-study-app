@@ -4,6 +4,12 @@ export type AppErrorKind =
   | 'invalid-data'
   | 'permission-denied'
   | 'network'
+  /** 利用者が操作を取り消した（ログインのポップアップを閉じたなど）。エラー表示は不要 */
+  | 'cancelled'
+  /** ブラウザがポップアップをブロックした */
+  | 'popup-blocked'
+  /** 設定（環境変数・Firebase コンソール）の不足や誤り */
+  | 'configuration'
   | 'unknown'
 
 /** 利用者に見せる日本語メッセージ付きのエラー。外部ライブラリのエラーはリポジトリ層でこれに変換する。 */

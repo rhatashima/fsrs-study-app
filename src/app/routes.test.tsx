@@ -1,21 +1,13 @@
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryRouter } from 'react-router'
-import { RouterProvider } from 'react-router/dom'
 import { describe, expect, it } from 'vitest'
 import { createSampleRepositories } from '../dev/sampleRepositories'
+import { renderApp } from '../test/renderApp'
 import { NAV_ITEMS } from './navigation'
-import { RepositoryContext } from './repositoryContext'
-import { routes } from './routes'
 
+/** Owner としてログイン済みの状態で表示する */
 function renderAt(path: string) {
-  const router = createMemoryRouter(routes, { initialEntries: [path] })
-  render(
-    <RepositoryContext value={createSampleRepositories()}>
-      <RouterProvider router={router} />
-    </RepositoryContext>,
-  )
-  return router
+  return renderApp({ createRepositories: createSampleRepositories, path }).router
 }
 
 describe('routes', () => {
