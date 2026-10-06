@@ -1,6 +1,6 @@
 # アーキテクチャ (ARCHITECTURE)
 
-最終更新: 2026-10-05 / Phase 4
+最終更新: 2026-10-06 / Phase 5
 
 ## 1. 全体像
 
@@ -56,10 +56,17 @@
 |---|---|---|
 | `MaterialRepository` | `list` / `get` / `save` | |
 | `CardRepository` | `getByIds` / `listNewCandidates` / `countActive` / `saveMany` | Card だけを扱い、ReviewState / ReviewLog に触れない |
-| `ReviewRepository` | `getStates` / `listDue` / `recordReview` / `listLogsForCard` / `getProgress` | ReviewState・ReviewLog・集計は 1 回のレビューで同時に更新する必要があるため 1 つにまとめた。**ReviewLog を変更・削除するメソッドは持たない**（追記のみ） |
+| `ReviewRepository` | `getStates` / `listDue` / `recordReview` / `listLogsForCard` / `findCardsWithLogs` / `restoreState` / `getProgress` / `replaceProgress` | ReviewState・ReviewLog・集計は 1 回のレビューで同時に更新する必要があるため 1 つにまとめた。**ReviewLog を変更・削除するメソッドは持たない**（追記のみ）。`recordReview` は同じ内容の再送に対して冪等 |
 | `SettingsRepository` | `getSettings` / `saveSettings` / `getSchedulerConfig` / `saveSchedulerConfig` | SchedulerConfig は作成のみ |
 
-メモリ実装（`createMemoryRepositories`）は呼び出しごとに独立したデータを持ち、保存・取得のたびにコピーする（呼び出し側の変更が保存済みデータに影響しない）。Firestore 実装（Phase 5）も同じ interface を満たし、同じテストの考え方で確認する。
+実装は 2 つ。どちらも `src/repositories/repositoryContract.ts` の**同じ契約テスト**で確認する。
+
+| 実装 | 用途 | テスト |
+|---|---|---|
+| `memory/createMemoryRepositories` | ユニットテスト・画面のテスト（呼び出しごとに独立したデータ。保存・取得のたびにコピー） | `npm test` |
+| `firestore/createFirestoreRepositories` | アプリ本体（`users/{uid}/...`） | `npm run test:rules`（Firestore Emulator + 本物の Security Rules） |
+
+保存時の整合性ルール（カードの検査、レビュー保存の判定、復元の検査）は `src/repositories/writeRules.ts` に置き、両方の実装で共通に使う。Firestore 実装は Date ↔ Timestamp の変換（`serialization.ts`）、読み込みデータの検証（`validation.ts`）、エラーの日本語化（`errors.ts`）をこの層で行い、Firestore の型を外に出さない。
 
 ## 2. ディレクトリ構成（予定）
 
@@ -70,10 +77,11 @@ fsrs-study-app/
 ├─ docs/                      設計ドキュメント
 ├─ .env.example               必要な環境変数のキー名のみ
 ├─ firebase.json              Hosting / Firestore / Emulator 設定
+├─ firebase.emulator.json     Rules テスト用の Emulator 設定
 ├─ firestore.rules.template   Security Rules（Owner UID はプレースホルダ）
 ├─ firestore.indexes.json
 ├─ scripts/
-│   └─ build-rules.mjs        .env.local の VITE_OWNER_UID から firestore.rules を生成（生成物は gitignore）
+│   └─ firebase-prepare.mjs   .env.local から firestore.rules と .firebaserc を生成（生成物は gitignore）
 ├─ public/
 │   ├─ icons/                 PWA アイコン
 │   └─ images/                画像付きカード用（任意）
@@ -121,12 +129,13 @@ fsrs-study-app/
 | 言語 | TypeScript 6.0 | typescript-eslint 8 の対応範囲が `<6.1` のため、TypeScript 7 ではなく 6.0 系に固定（`~6.0.x`）。typescript-eslint が対応したら更新を検討 |
 | ルーティング | React Router 8（Data Mode：`createBrowserRouter`） | 5画面 + リロード・URL 直接アクセス・戻る/進むに対応。`RouterProvider` は `react-router/dom` から import する。Firebase Hosting では全パスを `index.html` に rewrite する（Phase 5 の `firebase.json`） |
 | FSRS | ts-fsrs **5.4.2**（`--save-exact` で固定。内部アルゴリズムは FSRS-6.0） | 要件。FSRS の計算はすべて ts-fsrs に任せ、アプリ側でアルゴリズムを再実装しない |
-| 検証 | zod | インポート検証と Firestore 読み込みデータの検証（FSRS 状態破損検出）を同じ仕組みで行う |
+| 検証 | 手書きの小さな検証（`repositories/firestore/validation.ts`） | Firestore の読み込みデータの検証には十分なため、検証ライブラリは追加していない。CSV / JSON インポート（Phase 6）で必要になれば改めて検討する |
 | CSV | papaparse | 引用符・改行入り CSV を正しく扱うため自前実装しない |
 | PWA | vite-plugin-pwa | manifest / Service Worker 生成 |
 | テスト | Vitest 5, jsdom, @testing-library/react, @testing-library/user-event | Vite と統合。設定は `vitest.config.ts` |
 | Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ |
-| Rules テスト | @firebase/rules-unit-testing + Firestore Emulator | Java が必要なため `npm test` とは別コマンド |
+| Firebase CLI | firebase-tools 15.32.1（devDependency、`--save-exact`） | Emulator での Rules テスト、デプロイ |
+| Rules テスト | @firebase/rules-unit-testing 5.0.2 + Firestore Emulator | Java（21 以上を推奨）が必要なため `npm test` とは別コマンド（`npm run test:rules`） |
 | Lint | ESLint 10 (flat config) + typescript-eslint（型情報を使う推奨ルール） | `no-restricted-imports` でレイヤー間の import を制限。制限が働くことは `tests/architecture/import-boundaries.test.ts` で確認 |
 
 使わないもの：状態管理ライブラリ（Redux 等）、UI コンポーネントライブラリ、CSS フレームワーク、データ取得ライブラリ。React Context + hooks で足りる規模のため。
@@ -137,7 +146,7 @@ fsrs-study-app/
 Card（教材の中身）        ReviewState（FSRS の状態）      ReviewLog（履歴, 追記のみ）       MaterialProgress（集計）
  question / answer ...     due, stability, difficulty…     rating, reviewedAt               件数・評価回数・日別数
  examDifficulty            lastLogId, schedulerConfigId    previous / next スナップショット  newCursorOrder
- ↑ インポートで更新        ↑ レビューでのみ更新            ↑ レビューで1件追加               ↑ increment で加算
+ ↑ インポートで更新        ↑ レビューでのみ更新            ↑ レビューで1件追加               ↑ レビューごとに加算
 ```
 
 - **Card** は「何を問うか」だけを持つ。学習に関する値を一切持たない。インポートで上書きされても構わない。
@@ -221,9 +230,9 @@ loadStudyOverview(repos, materialId, now): { material, counts }   // ホーム�
 ## 5. 同期・保存方針
 
 - **全件読み込みを前提にしない。** ホームは集計ドキュメント 1 件 + 今日の学習日内に期限が来る ReviewState、学習開始は期限到来分と必要な新規分だけをクエリで取得、統計は集計ドキュメント 1 件で表示する。ReviewLog は統計のために読まない。
-- 1 レビュー = `writeBatch` で ReviewState の set + ReviewLog の create + 集計の increment（書き込み 3 回）。
-- 保存は非同期。UI は次のカードへ進みつつ「保存中 / 未保存 n 件」を表示。失敗したら保持して再試行ボタンを出す。未保存がある状態でページを閉じようとしたら `beforeunload` で警告。
-- 複数端末で同じカードを同時に学習した場合：ReviewLog は両方残る（追記のみ）。ReviewState は後勝ち。集計は `increment()` なのでずれない。個人利用では許容する。
+- 1 レビュー = トランザクションで ReviewLog・ReviewState・集計を読み、整合性を確かめてから 3 つを書く（読み取り 3・書き込み 3）。同じ id・同じ内容の再送は何もせず成功する（二重登録しない）。詳細は DATA_MODEL.md §5。
+- 評価を押すと保存が完了してから次のカードへ進む（保存中はボタンを無効化し、二重押しを防ぐ）。失敗したら日本語のエラーと「もう一度保存する」を表示し、同じ内容（同じ id・評価・日時）を再送する。保存中・未保存のままページを閉じようとしたら `beforeunload` で確認を出す。
+- 複数端末で同じカードを同時に学習した場合：後から保存した側は、保存済みの状態が自分の `previousState` と違うため `conflict`（「別の端末などで先に学習されています。画面を再読み込み…」）になり、上書きしない。集計はトランザクションなのでずれない。
 - Firestore の永続キャッシュ（IndexedDB）は MVP では使わない（複数タブ・古いキャッシュの問題を避け、「安全な同期」を優先）。
 
 ### 読み取り回数の見積もり
@@ -270,17 +279,33 @@ services/auth/         AppUser・AuthGateway（interface）、ログイン方式
 - `VITE_OWNER_UID` とログイン中の UID が一致すれば authorized、違えば unauthorized（「このアカウントには利用権限がありません」＋ログアウト）。未設定ならすべて unauthorized で、自分の UID と設定方法を表示する。
 - **この判定は画面上の制御（UX）であり、セキュリティの境界ではない。** 本当の境界は Phase 5 の Firestore Security Rules（下記）。
 
-### Firestore でのアクセス制御（Phase 5）
+### Firestore でのアクセス制御（本当のセキュリティ境界）
 
-- データは `users/{uid}/...` 配下に置き、Security Rules で `request.auth.uid == uid` **かつ** `uid == Owner の UID` の場合のみ許可。
-- Owner の UID はリポジトリにコミットしない方針とし、`firestore.rules.template` から `scripts/build-rules.mjs` が `.env.local` の `VITE_OWNER_UID` で `firestore.rules` を生成してデプロイする（UID は認証情報ではないが、個人を特定する値を公開リポジトリに残さないため。アプリ側と同じ値を 1 か所で管理する）。
-- ReviewLog は Rules で **create のみ許可（update / delete 禁止）**。Card / ReviewState / Material も delete 禁止（アーカイブで対応）。バグによる履歴破壊を Rules レベルで防ぐ。
+- データは `users/{uid}/...` 配下に置き、Security Rules で `request.auth.uid == uid` **かつ** `uid == Owner の UID` の場合のみ許可（クライアントの `VITE_OWNER_UID` は信用しない）。
+- Owner の UID はリポジトリにコミットしない方針とし、`firestore.rules.template` から `scripts/firebase-prepare.mjs`（`npm run firebase:prepare`）が `.env.local` の `VITE_OWNER_UID` で `firestore.rules` を生成してデプロイする（UID は認証情報ではないが、個人を特定する値を残さないため。アプリ側と同じ値を 1 か所で管理する）。
+- ReviewLog は **create のみ（update / delete 禁止）**、SchedulerConfig も作成のみ、delete はどこにも許可しない。ReviewState は参照する ReviewLog が存在する場合だけ保存できる。詳細は DATA_MODEL.md §5。
+
+## 6.5 Firebase CLI と Hosting
+
+| ファイル | Git | 内容 |
+|---|---|---|
+| `firebase.json` | ✓ | Firestore の Rules / Indexes の場所、Hosting（`dist/`、全パスを `/index.html` に rewrite、`/assets/` は長期キャッシュ・それ以外は `no-cache`） |
+| `firebase.emulator.json` | ✓ | Rules テスト用（Emulator のみ。`demo-` プロジェクトで本番に接続しない） |
+| `firestore.rules.template` | ✓ | Security Rules の正本 |
+| `firestore.indexes.json` | ✓ | 複合インデックス（DATA_MODEL.md §6） |
+| `firestore.rules` | ✕（生成） | `npm run firebase:prepare` が生成 |
+| `.firebaserc` | ✕（生成） | `npm run firebase:prepare` が `VITE_FIREBASE_PROJECT_ID` から生成 |
+
+- デプロイは利用者の承認を得てから手動で行う（npm scripts に `deploy` は用意しない）。手順は README。
+- 本番の最初のアクセス先は `https://<project-id>.firebaseapp.com`（authDomain と同じ）。
 
 ## 7. エラー処理
 
 - `domain/errors.ts` に `AppError`（種別 + 日本語メッセージ）を定義。Firestore / Auth のエラーコードはリポジトリ層・Auth 層で `AppError` に変換し、UI は日本語メッセージを表示するだけにする。
 - ルートと各ページに Error Boundary。
-- Firestore から読み込んだ ReviewState は zod で検証する。不正なものはそのカードの最新 ReviewLog の `nextState` から復元して警告を出す。ReviewLog もない場合は未学習として扱う。
+- Firestore のエラーコード（permission-denied・unauthenticated・unavailable・aborted・failed-precondition など）は `repositories/firestore/errors.ts` で日本語の `AppError` に変換する。コードをそのまま画面に出さない。
+- Firestore から読み込んだ ReviewState が不正、または ReviewLog があるのに ReviewState がない場合は `CorruptedReviewStateError` を投げ、学習画面で「学習履歴から復元する」を表示する（黙って修復しない）。復元は `services/restoreService.ts`。
+- レビュー保存の失敗は学習画面にエラーと「もう一度保存する」を表示する。
 
 ## 8. 将来拡張の受け皿
 

@@ -1,0 +1,182 @@
+rules_version = '2';
+
+// Cloud Firestore Security Rules（docs/DATA_MODEL.md §5）
+//
+// このファイルがテンプレート。デプロイする firestore.rules は `npm run firebase:prepare` が
+// .env.local の VITE_OWNER_UID で isOwner() 内のプレースホルダーを置き換えて生成する（firestore.rules は Git に入れない）。
+//
+// 方針：
+// - 未ログイン・Owner 以外はすべて拒否。Owner は users/{自分の uid}/ の下の決まった場所だけ。
+// - ここに書いていないパス（不明なコレクション）はすべて拒否。
+// - delete はどこにも許可しない（カードはアーカイブで対応）。
+// - ReviewLog は作成のみ（変更・削除不可）。SchedulerConfig も作成のみ（不変）。
+// - ReviewState は、参照する ReviewLog が同じ書き込みの後に存在する場合だけ保存できる
+//   （レビュー保存時は同じトランザクションで作成、復元時は既存の ReviewLog）。
+// - 主要な項目の型を確かめる（細かな整合性はアプリ側で検証する）。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid && uid == '__OWNER_UID__';
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isNonNegativeInt(v) {
+      return v is int && v >= 0;
+    }
+
+    function optionalLevel(d, key) {
+      return !(key in d) || d[key] == null || (d[key] is int && d[key] >= 1 && d[key] <= 5);
+    }
+
+    function validRatingCounts(m) {
+      return m is map
+        && m.keys().hasOnly(['again', 'hard', 'good', 'easy'])
+        && isNonNegativeInt(m.again) && isNonNegativeInt(m.hard)
+        && isNonNegativeInt(m.good) && isNonNegativeInt(m.easy);
+    }
+
+    function validSnapshot(s) {
+      return s is map
+        && s.keys().hasAll(['phase', 'due', 'stability', 'difficulty', 'scheduledDays', 'learningSteps', 'reps', 'lapses'])
+        && s.phase in ['new', 'learning', 'review', 'relearning']
+        && s.due is timestamp
+        && s.stability is number
+        && s.difficulty is number
+        && s.scheduledDays is number
+        && isNonNegativeInt(s.learningSteps)
+        && isNonNegativeInt(s.reps)
+        && isNonNegativeInt(s.lapses)
+        && (!('lastReviewedAt' in s) || s.lastReviewedAt == null || s.lastReviewedAt is timestamp);
+    }
+
+    function validSettings(d) {
+      return d.dayStartHour is int && d.dayStartHour >= 0 && d.dayStartHour <= 23
+        && d.requestRetention is number && d.requestRetention > 0 && d.requestRetention < 1
+        && d.maximumInterval is int && d.maximumInterval >= 1
+        && d.enableFuzz is bool
+        && d.enableShortTerm is bool
+        && d.learningSteps is list
+        && d.relearningSteps is list
+        && d.updatedAt is timestamp;
+    }
+
+    function validSchedulerConfig(configId, d) {
+      return d.id == configId
+        && d.library is string
+        && d.libraryVersion is string
+        && d.params is map
+        && d.params.weights is list
+        && d.createdAt is timestamp;
+    }
+
+    function validMaterial(materialId, d) {
+      return d.id == materialId
+        && d.title is string && d.title.size() > 0
+        && d.description is string
+        && d.isActive is bool
+        && isNonNegativeInt(d.newCardsPerDay)
+        && d.createdAt is timestamp
+        && d.updatedAt is timestamp;
+    }
+
+    function validCard(materialId, cardId, d) {
+      return d.id == cardId
+        && d.materialId == materialId
+        && d.question is string
+        && d.answer is string
+        && d.explanation is string
+        && d.category is string
+        && d.tags is list
+        && d.order is int && d.order >= 1
+        && d.isArchived is bool
+        && optionalLevel(d, 'examDifficulty')
+        && optionalLevel(d, 'importance')
+        && d.createdAt is timestamp
+        && d.updatedAt is timestamp;
+    }
+
+    function validReviewState(materialId, cardId, d) {
+      return d.cardId == cardId
+        && d.materialId == materialId
+        && validSnapshot(d)
+        && d.suspended is bool
+        && d.firstReviewedAt is timestamp
+        && validRatingCounts(d.ratingCounts)
+        && d.lastLogId is string && d.lastLogId.size() > 0
+        && d.schedulerConfigId is string
+        && d.updatedAt is timestamp;
+    }
+
+    function validReviewLog(materialId, logId, d) {
+      return d.keys().hasOnly(['id', 'materialId', 'cardId', 'reviewedAt', 'rating', 'previousState', 'nextState', 'scheduler', 'durationMs'])
+        && d.id == logId
+        && d.materialId == materialId
+        && d.cardId is string
+        && d.reviewedAt is timestamp
+        && d.rating in ['again', 'hard', 'good', 'easy']
+        && (d.previousState == null || validSnapshot(d.previousState))
+        && validSnapshot(d.nextState)
+        && d.scheduler is map
+        && d.scheduler.configId is string
+        && d.scheduler.libraryVersion is string
+        && (!('durationMs' in d) || d.durationMs == null || d.durationMs is number);
+    }
+
+    function validProgress(materialId, d) {
+      return d.materialId == materialId
+        && isNonNegativeInt(d.totalCards)
+        && isNonNegativeInt(d.studiedCards)
+        && isNonNegativeInt(d.newCursorOrder)
+        && validRatingCounts(d.ratingCounts)
+        && d.byCategory is map
+        && d.daily is map
+        && d.updatedAt is timestamp;
+    }
+
+    match /users/{uid} {
+
+      match /settings/{docId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && docId == 'app' && validSettings(incoming());
+      }
+
+      // FSRS 設定の記録：作成のみ（過去の ReviewLog が参照するため変更・削除しない）
+      match /schedulerConfigs/{configId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && validSchedulerConfig(configId, incoming());
+      }
+
+      match /materials/{materialId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid) && validMaterial(materialId, incoming());
+
+        match /cards/{cardId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && validCard(materialId, cardId, incoming());
+        }
+
+        match /reviewStates/{cardId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid)
+            && validReviewState(materialId, cardId, incoming())
+            && existsAfter(/databases/$(database)/documents/users/$(uid)/materials/$(materialId)/reviewLogs/$(incoming().lastLogId));
+        }
+
+        // 学習履歴：追記のみ
+        match /reviewLogs/{logId} {
+          allow read: if isOwner(uid);
+          allow create: if isOwner(uid) && validReviewLog(materialId, logId, incoming());
+        }
+
+        match /progress/{docId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid) && docId == 'summary' && validProgress(materialId, incoming());
+        }
+      }
+    }
+  }
+}

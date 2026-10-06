@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useClock } from '../app/clockContext'
 import { useRepositories } from '../app/repositoryContext'
+import { isCorruptedReviewStateError } from '../domain'
 import { errorMessage } from '../lib/errorMessage'
 import { formatInterval } from '../lib/formatInterval'
 import { loadStudyOverview, selectCurrentMaterial, type StudyOverview } from '../services/studyService'
@@ -10,7 +11,7 @@ import homeStyles from './HomePage.module.css'
 
 type LoadState =
   | { status: 'loading' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; corrupted: boolean }
   | { status: 'no-material' }
   | { status: 'loaded'; overview: StudyOverview; now: Date }
 
@@ -33,7 +34,11 @@ export function HomePage() {
         if (!cancelled) setState({ status: 'loaded', overview, now })
       } catch (error) {
         if (!cancelled) {
-          setState({ status: 'error', message: errorMessage(error, '読み込めませんでした。再読み込みしてください。') })
+          setState({
+            status: 'error',
+            message: errorMessage(error, '読み込めませんでした。再読み込みしてください。'),
+            corrupted: isCorruptedReviewStateError(error),
+          })
         }
       }
     })()
@@ -46,7 +51,12 @@ export function HomePage() {
     <section className={styles.page}>
       <h1 className={styles.title}>ホーム</h1>
       {state.status === 'loading' && <p className={styles.muted}>読み込み中…</p>}
-      {state.status === 'error' && <p role="alert">{state.message}</p>}
+      {state.status === 'error' && (
+        <div className={styles.panel}>
+          <p role="alert">{state.message}</p>
+          {state.corrupted && <Link to="/study">学習画面で復元する</Link>}
+        </div>
+      )}
       {state.status === 'no-material' && (
         <div className={styles.panel}>
           <p className={styles.muted}>教材がありません。教材を登録すると、ここに今日の学習が表示されます。</p>

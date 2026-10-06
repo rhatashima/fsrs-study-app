@@ -1,5 +1,9 @@
+import { lazy, Suspense } from 'react'
 import { useAuth } from '../app/authContext'
 import styles from './Page.module.css'
+
+// 開発サーバーでだけ読み込む（本番ビルドでは import.meta.env.DEV が false になり、コードごと除かれる）
+const DevSeedPanel = import.meta.env.DEV ? lazy(() => import('../dev/DevSeedPanel')) : null
 
 export function SettingsPage() {
   const { auth, signOut, error } = useAuth()
@@ -18,6 +22,11 @@ export function SettingsPage() {
       <div className={styles.panel}>
         <p className={styles.muted}>学習の設定項目は今後追加されます。</p>
       </div>
+      {DevSeedPanel && (
+        <Suspense fallback={null}>
+          <DevSeedPanel />
+        </Suspense>
+      )}
     </section>
   )
 }

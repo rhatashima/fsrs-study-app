@@ -1,6 +1,7 @@
 import {
   AppError,
   applyAnswer,
+  CorruptedReviewStateError,
   countStudyItems,
   createStudySession,
   remainingNewCardsToday,
@@ -59,6 +60,8 @@ export async function prepareScheduler(
 /**
  * 新規カードを order 順に needed 枚まで集める。
  * 候補のうち ReviewState があるもの（端末間の同時操作などでカーソルがずれた場合）は除き、足りなければ続きを取る。
+ * ReviewState がないのに ReviewLog があるカード（状態の欠落）は新規として出さず、CorruptedReviewStateError にする
+ * （新規として学習すると、過去の履歴とつながらない状態で上書きしてしまうため）。
  */
 async function findNewCards(
   repos: Repositories,
@@ -75,7 +78,13 @@ async function findNewCards(
     const studied = new Set(
       (await repos.reviews.getStates(materialId, candidates.map((card) => card.id))).map((s) => s.cardId),
     )
-    found.push(...candidates.filter((card) => !studied.has(card.id)))
+    const unstudied = candidates.filter((card) => !studied.has(card.id))
+    const missingStates = await repos.reviews.findCardsWithLogs(
+      materialId,
+      unstudied.map((card) => card.id),
+    )
+    if (missingStates.length > 0) throw new CorruptedReviewStateError(materialId, missingStates)
+    found.push(...unstudied)
     cursor = candidates[candidates.length - 1]?.order ?? cursor
     if (candidates.length < limit) break
   }
@@ -155,15 +164,17 @@ export interface SubmitReviewInput {
   durationMs: number | null
 }
 
-/** 評価を確定する：次の状態を計算し、ReviewState・ReviewLog・集計を保存してからセッションに反映する */
-export async function submitReview(
-  repos: Repositories,
+/**
+ * 評価から、保存するレビュー結果を作る（保存はしない）。
+ * logId は画面にカードを出したときに 1 回だけ採番し、保存の再試行では同じ結果をそのまま送る（二重登録の防止）。
+ */
+export function buildReview(
   context: StudyContext,
   session: StudySession,
   input: SubmitReviewInput,
-  logId: string = createId(),
-): Promise<{ session: StudySession; record: ReviewRecord }> {
-  const record = reviewCard({
+  logId: string,
+): ReviewRecord {
+  return reviewCard({
     scheduler: context.scheduler,
     card: input.card,
     current: session.states[input.card.id] ?? null,
@@ -173,6 +184,26 @@ export async function submitReview(
     durationMs: input.durationMs,
     dayStartHour: context.dayStartHour,
   })
+}
+
+/** レビュー結果を保存してからセッションに反映する（同じ結果の再送は冪等） */
+export async function saveReview(
+  repos: Repositories,
+  session: StudySession,
+  record: ReviewRecord,
+): Promise<StudySession> {
   await repos.reviews.recordReview(record)
-  return { session: applyAnswer(session, record.state, input.rating), record }
+  return applyAnswer(session, record.state, record.log.rating)
+}
+
+/** 評価を確定する：次の状態を計算し、ReviewState・ReviewLog・集計を保存してからセッションに反映する */
+export async function submitReview(
+  repos: Repositories,
+  context: StudyContext,
+  session: StudySession,
+  input: SubmitReviewInput,
+  logId: string = createId(),
+): Promise<{ session: StudySession; record: ReviewRecord }> {
+  const record = buildReview(context, session, input, logId)
+  return { session: await saveReview(repos, session, record), record }
 }

@@ -1,6 +1,6 @@
 # 実装計画 (IMPLEMENTATION_PLAN)
 
-最終更新: 2026-10-05 / Phase 4
+最終更新: 2026-10-06 / Phase 5
 
 ## 1. 当初案からの変更点と理由
 
@@ -20,7 +20,7 @@
 - **オフライン編集同期**：MVP では実装しない。Firestore の永続キャッシュも使わない。
 - **FSRS 設定の記録**：ReviewLog に毎回パラメータ全体をコピーせず、不変の SchedulerConfig ドキュメントの id だけを持たせる。
 - **ReviewLog からの再計算**：MVP では実装しない。復元は「最新 ReviewLog の `nextState` をコピー」だけで足りる。
-- **集計のずれ**：レビュー時は `increment()` で加算するだけにし、カテゴリー変更などによるずれは手動の「再集計」で直す（自動の整合処理は作らない）。
+- **集計のずれ**：レビュー時はトランザクションで集計に加算するだけにし、カテゴリー変更などによるずれは手動の「再集計」で直す（自動の整合処理は作らない）。
 - **教材ごとの FSRS パラメータ**：不要。全教材共通。
 - **Firebase Storage**：Spark では新規利用不可のため使わない。画像は外部 URL か Hosting の `public/images/`。
 - **Rules テスト**：Java + Emulator が必要なので `npm run test:rules` として分離し、`npm test` は常に単体で通るようにする。
@@ -67,15 +67,16 @@
 - **利用者の作業**：Firebase プロジェクト作成、Web アプリ登録、Google ログイン有効化、`.env.local` の設定（README の手順）。
 - 注意：`npm audit` が firebase 内の `@grpc/grpc-js`（Firestore の Node.js 用通信部分）について high を報告する。ブラウザ版では使われない部分で、提示される修正は firebase 9 への格下げ（破壊的変更）のため適用しない。firebase の更新時に再確認する。
 
-### Phase 5：Firestore 同期 + Security Rules（branch: `feature/firestore`）
-- **利用者の作業が必要**：Firestore データベース作成（ロケーション `asia-northeast1`）、Firebase CLI へのログイン（`VITE_OWNER_UID` は Phase 4 で設定済みのものを Rules の生成にも使う）。
-- `repositories/firestore/`（converter、zod 検証、batch 保存、`increment()` による集計、`count()` 集計）、`firestore.indexes.json`。
-- 保存状態表示（保存中 / 未保存 n 件 / 再試行）、`beforeunload` 警告。
-- `firebase.json`（Hosting は全パスを `/index.html` に rewrite して URL 直接アクセスに対応）。
-- `firestore.rules.template`, `scripts/build-rules.mjs`, `tests/rules/`（ESLint の import 制限で `tests/rules/` に Firebase SDK を許可する設定を追加）（Owner のみ可、他ユーザー不可、未ログイン不可、ReviewLog 更新・削除不可）。
-- 初回デプロイ（Hosting + Rules）。**デプロイ前に利用者の確認を取る。**
-- 確認：PC とスマホで同じ履歴が見えること、リロードしても壊れないこと。
-- コミット例：`feat: add Firestore repositories`, `feat: add Firestore security rules`, `test: add security rules tests`
+### Phase 5：Firestore 同期・Security Rules・初回 Hosting（branch: `feature/firestore-sync`）実装済み・デプロイ待ち
+- Firestore（Standard edition、`(default)`、`asia-northeast1`）は利用者が作成済み。リージョン・データベースは変更しない。
+- `src/repositories/firestore/`：Repository interface の Firestore 実装、Date ↔ Timestamp 変換、読み込みデータの検証（手書き）、エラーの日本語化。レビュー保存はトランザクション（ReviewLog の id による二重登録防止・別端末との競合検出）。
+- メモリ実装と Firestore 実装を同じ契約テスト（`repositoryContract.ts`）で確認。
+- ReviewState の破損・欠落の検出（`CorruptedReviewStateError`）と、利用者が選んだときだけの履歴からの復元（`restoreService.ts`）。
+- 学習画面：保存失敗時の「もう一度保存する」（同じ内容の再送）、二重押しの防止、未保存時の `beforeunload` 確認。
+- `firestore.rules.template`・`tests/rules/`（Emulator）・`firestore.indexes.json`・`firebase.json`（Hosting：`dist/`、SPA の rewrite、キャッシュ設定）・`scripts/firebase-prepare.mjs`。
+- 開発用のダミーデータ投入（開発サーバーの設定画面だけに表示。本番ビルドには含まれない）。
+- `npm audit`：firebase-tools（開発用ツール）由来の moderate / high が増える。アプリには含まれない。firebase 本体の `@grpc/grpc-js` は Phase 4 の記載どおり。
+- **残り：本番デプロイ（利用者の承認後）と実機確認**（README の「デプロイ」「デプロイ後の確認」）。
 
 ### Phase 6：CSV / JSON インポート（branch: `feature/import`）
 - `services/import/`（papaparse, zod 検証, 差分分類）とインポート画面（プレビュー → 更新/スキップ選択 → 確定）。
@@ -147,6 +148,9 @@ git push origin --delete docs/initial-design   # 任意：リモートのブラ�
 | ログイン方式 | localhost・PC はポップアップ、スマホ・PWA はリダイレクト | 2026-10-05 |
 | 本番の最初のアクセス先 | `https://<project-id>.firebaseapp.com`（authDomain と同じ） | 2026-10-05 |
 | Owner の UID の管理 | `.env.local` の `VITE_OWNER_UID`（アプリと Rules の生成で共用。コミットしない） | 2026-10-05 |
+| Firestore | Standard edition・`(default)`・`asia-northeast1`（Production mode で作成済み） | 2026-10-06 |
+| レビューの保存方式 | トランザクション（バッチではなく。既存の状態・履歴・集計を読んで整合性を確かめるため） | 2026-10-06 |
+| `.firebaserc` | Git に入れず `.env.local` から生成 | 2026-10-06 |
 
 ## 6. 未決定事項（推奨案で進め、必要なら変更）
 

@@ -5,11 +5,12 @@ import { RouterProvider } from 'react-router/dom'
 import { AuthProvider } from './app/AuthProvider'
 import { RepositoryFactoryContext, type RepositoryFactory } from './app/repositoryContext'
 import { routes } from './app/routes'
-import { createSampleRepositories } from './dev/sampleRepositories'
 import { ConfigErrorPage } from './pages/ConfigErrorPage'
+import { createFirestoreRepositories } from './repositories/firestore/createFirestoreRepositories'
 import { getFirebaseApp } from './services/firebase/app'
 import { createFirebaseAuthGateway } from './services/firebase/auth'
 import { readFirebaseConfig } from './services/firebase/config'
+import { getFirestoreDb } from './services/firebase/firestore'
 import './styles/global.css'
 
 const rootElement = document.getElementById('root')
@@ -27,10 +28,12 @@ if (!firebase.ok) {
     </StrictMode>,
   )
 } else {
-  const gateway = createFirebaseAuthGateway(getFirebaseApp(firebase.config))
+  const app = getFirebaseApp(firebase.config)
+  const gateway = createFirebaseAuthGateway(app)
+  const db = getFirestoreDb(app)
   const router = createBrowserRouter(routes)
-  // Firestore 接続（Phase 5）までは、ログインごとにダミーデータ入りのメモリ上のデータを作る
-  const createRepositories: RepositoryFactory = () => createSampleRepositories()
+  // ログインした Owner のデータ（Firestore の users/{uid}/...）を使う
+  const createRepositories: RepositoryFactory = (user) => createFirestoreRepositories(db, user.uid)
 
   root.render(
     <StrictMode>

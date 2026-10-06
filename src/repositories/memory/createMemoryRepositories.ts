@@ -3,12 +3,10 @@ import {
   applyReview,
   defaultAppSettings,
   emptyProgress,
-  isValidCardId,
   rebuildProgress,
   sameSchedulerConfig,
   selectDueStates,
   selectNewCards,
-  snapshotsEqual,
   type AppSettings,
   type Card,
   type MaterialProgress,
@@ -17,11 +15,11 @@ import {
   type SchedulerConfig,
   type StudyMaterial,
 } from '../../domain'
+import { assertConsistentRecord, assertRestorableState, assertValidCard, decideReviewWrite } from '../writeRules'
 import type {
   CardRepository,
   MaterialRepository,
   Repositories,
-  ReviewRecord,
   ReviewRepository,
   SettingsRepository,
 } from '../types'
@@ -106,31 +104,11 @@ export function createMemoryRepositories(
 
   function validateCard(card: Card): void {
     requireMaterial(card.materialId)
-    if (!isValidCardId(card.id)) {
-      throw new AppError(
-        'invalid-data',
-        `カード id「${card.id}」は使えません。半角英数字・ハイフン・アンダースコア（100 文字以内）で指定してください。`,
-      )
-    }
-    if (!Number.isInteger(card.order) || card.order < 1) {
-      throw new AppError('invalid-data', `カード「${card.id}」の並び順（order）が不正です。`)
-    }
+    assertValidCard(card)
   }
 
-  function validateReviewRecord({ state, log }: ReviewRecord): void {
-    requireMaterial(log.materialId)
-    if (state.cardId !== log.cardId || state.materialId !== log.materialId) {
-      throw new AppError('invalid-data', 'レビュー結果のカードが一致しません。')
-    }
-    if (state.lastLogId !== log.id) {
-      throw new AppError('invalid-data', 'レビュー結果の履歴 id が一致しません。')
-    }
-    if (!snapshotsEqual(state, log.nextState)) {
-      throw new AppError('invalid-data', 'レビュー結果の状態が履歴と一致しません。')
-    }
-    if ((store.logs.get(log.materialId) ?? []).some((existing) => existing.id === log.id)) {
-      throw new AppError('conflict', 'このレビューはすでに保存されています。')
-    }
+  function findLog(materialId: string, logId: string): ReviewLog | null {
+    return (store.logs.get(materialId) ?? []).find((log) => log.id === logId) ?? null
   }
 
   function currentProgress(materialId: string): MaterialProgress {
@@ -191,8 +169,11 @@ export function createMemoryRepositories(
     recordReview: (record) =>
       run(() => {
         // 検証がすべて通ってから 3 つを更新する（アトミック）
-        validateReviewRecord(record)
+        requireMaterial(record.log.materialId)
+        assertConsistentRecord(record)
         const { state, log, context } = record
+        const stored = store.states.get(state.materialId)?.get(state.cardId) ?? null
+        if (decideReviewWrite(record, findLog(log.materialId, log.id), stored) === 'duplicate') return
         innerMap(store.states, state.materialId).set(state.cardId, copy(state))
         const logs = store.logs.get(log.materialId) ?? []
         logs.push(copy(log))
@@ -207,7 +188,23 @@ export function createMemoryRepositories(
           .slice(0, Math.max(0, limit))
           .map(copy),
       ),
+    findCardsWithLogs: (materialId, cardIds) =>
+      run(() => {
+        const withLogs = new Set((store.logs.get(materialId) ?? []).map((log) => log.cardId))
+        return cardIds.filter((id) => withLogs.has(id))
+      }),
+    restoreState: (state) =>
+      run(() => {
+        requireMaterial(state.materialId)
+        assertRestorableState(state, findLog(state.materialId, state.lastLogId))
+        innerMap(store.states, state.materialId).set(state.cardId, copy(state))
+      }),
     getProgress: (materialId) => run(() => copy(currentProgress(materialId))),
+    replaceProgress: (progress) =>
+      run(() => {
+        requireMaterial(progress.materialId)
+        store.progress.set(progress.materialId, copy(progress))
+      }),
   }
 
   const settings: SettingsRepository = {

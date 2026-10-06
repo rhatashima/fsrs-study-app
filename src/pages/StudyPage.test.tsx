@@ -1,7 +1,8 @@
-import { fireEvent, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
-import type { Card } from '../domain'
+import { AppError, CorruptedReviewStateError, type Card } from '../domain'
+import type { ReviewRecord } from '../repositories/types'
 import { createMemoryRepositories } from '../repositories/memory/createMemoryRepositories'
 import { startStudySession, submitReview } from '../services/studyService'
 import { makeCard, makeMaterial } from '../test/factories'
@@ -145,21 +146,120 @@ describe('学習画面', () => {
     expect(screen.getByRole('button', { name: '答えを見る' })).toBeEnabled()
   })
 
-  it('保存に失敗したらエラーを表示し、同じカードのまま再度押せる', async () => {
-    const { repos, user } = setup()
+  it('保存に失敗したらエラーを表示し、同じ内容でもう一度保存できる', async () => {
+    const { repos, clock, user } = setup()
     const original = repos.reviews.recordReview.bind(repos.reviews)
+    const sent: ReviewRecord[] = []
     let fail = true
-    repos.reviews.recordReview = (record) =>
-      fail ? Promise.reject(new Error('network')) : original(record)
+    repos.reviews.recordReview = (record) => {
+      sent.push(record)
+      return fail ? Promise.reject(new Error('network')) : original(record)
+    }
 
     await user.click(await screen.findByRole('button', { name: '答えを見る' }))
     await user.click(ratingButton(/^正解/))
     expect(await screen.findByRole('alert')).toHaveTextContent('保存できませんでした')
     expect(screen.getByText('天守の最上階は？')).toBeInTheDocument()
+    // 評価をやり直すのではなく、同じ結果を再送する
+    expect(screen.queryByRole('group', { name: '自己評価' })).not.toBeInTheDocument()
+
+    // 未保存のままページを閉じようとすると確認が出る
+    const leaving = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(leaving)
+    expect(leaving.defaultPrevented).toBe(true)
 
     fail = false
-    await user.click(ratingButton(/^正解/))
+    clock.advanceMinutes(3)
+    await user.click(screen.getByRole('button', { name: 'もう一度保存する' }))
     expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+
+    // 再送は 1 回目と同じ id・評価・日時（押した時刻）
+    expect(sent).toHaveLength(2)
+    expect(sent[1]).toEqual(sent[0])
+    const logs = await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })
+    expect(logs).toHaveLength(1)
+    expect(logs[0]?.reviewedAt).toEqual(START)
+
+    // 保存できた後は確認を出さない
+    const afterSave = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(afterSave)
+    expect(afterSave.defaultPrevented).toBe(false)
+  })
+
+  it('サーバーには保存されたが応答が失われた場合も、再送で二重登録しない', async () => {
+    const { repos, user } = setup()
+    const original = repos.reviews.recordReview.bind(repos.reviews)
+    let loseResponse = true
+    repos.reviews.recordReview = async (record) => {
+      await original(record)
+      if (loseResponse) throw new AppError('network', 'サーバーに接続できませんでした。')
+    }
+
+    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+    await user.click(ratingButton(/^正解/))
+    expect(await screen.findByRole('alert')).toHaveTextContent('サーバーに接続できませんでした。')
+
+    loseResponse = false
+    await user.click(screen.getByRole('button', { name: 'もう一度保存する' }))
+    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
+    const progress = await repos.reviews.getProgress('m1')
+    expect(progress.ratingCounts.good).toBe(1)
+    expect(progress.studiedCards).toBe(1)
+  })
+
+  it('評価ボタンを素早く 2 回押しても 1 回分だけ保存する', async () => {
+    const { repos, user } = setup()
+    const original = repos.reviews.recordReview.bind(repos.reviews)
+    let calls = 0
+    repos.reviews.recordReview = (record) => {
+      calls += 1
+      return original(record)
+    }
+    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+    const good = ratingButton(/^正解/)
+    fireEvent.click(good)
+    fireEvent.click(good)
+    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+    expect(calls).toBe(1)
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
+  })
+
+  it('学習状態が壊れている・見つからない場合は、学習を止めて履歴からの復元を選べる', async () => {
+    const { repos, user } = setup()
+    // c1 を学習済みにしてから、ReviewState だけが見つからない状態にする
+    const { context, session } = await startStudySession(repos, 'm1', START)
+    await submitReview(repos, context, session, {
+      card: session.cards['c1'] as Card,
+      rating: 'easy',
+      reviewedAt: START,
+      durationMs: null,
+    })
+    // 保存されている c1 の学習状態が壊れている（Firestore で形式が正しくない場合と同じエラー）
+    const listDue = repos.reviews.listDue.bind(repos.reviews)
+    let corrupted = true
+    repos.reviews.listDue = (materialId, options) =>
+      corrupted ? Promise.reject(new CorruptedReviewStateError('m1', ['c1'])) : listDue(materialId, options)
+    const restoreState = repos.reviews.restoreState.bind(repos.reviews)
+    const restoredIds: string[] = []
+    repos.reviews.restoreState = async (state) => {
+      await restoreState(state)
+      restoredIds.push(state.cardId)
+      corrupted = false
+    }
+
+    // 新しい画面で学習を開く（この画面は最初の setup の画面とは別）
+    cleanup()
+    renderApp({ repos, clock: createTestClock(new Date(2026, 9, 6, 11, 0)).now, path: '/study' })
+    expect(await screen.findByRole('alert')).toHaveTextContent('学習履歴から復元できます')
+    expect(screen.queryByRole('button', { name: '答えを見る' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '学習履歴から復元する' }))
+    // 復元後は通常どおり学習できる（c1 は復習待ちなので、次の新規 c2 が出る）
+    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+    expect(restoredIds).toEqual(['c1'])
+    const [restored] = await repos.reviews.getStates('m1', ['c1'])
+    expect(restored?.phase).toBe('review')
     expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
   })
 })

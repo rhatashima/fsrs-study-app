@@ -25,7 +25,7 @@ export interface DailyProgress {
 
 /**
  * 教材ごとの学習の集計。ホーム・統計はこれ 1 件で表示し、ReviewLog を毎回読まない。
- * レビューのたびに applyReview で加算する（Firestore では increment で同じ加算をする）。
+ * レビューのたびに applyReview で加算する（Firestore ではトランザクション内で読み取った集計にこの関数を適用して書く）。
  */
 export interface MaterialProgress {
   materialId: string

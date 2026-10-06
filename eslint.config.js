@@ -32,9 +32,10 @@ const restrictFsrsInternals = {
 }
 const restrictFirebaseLayer = {
   // 画面などは Firebase を直接知らない（AuthGateway / Repository の interface を使う）
-  // .../services/firebase/... と、src/services/ 内からの ../firebase/...
-  regex: '(^|/)services/firebase(/|$)|^\\.\\./firebase(/|$)',
-  message: 'src/services/firebase/ は src/main.tsx（アプリの組み立て）からのみ import してください（ARCHITECTURE.md 参照）。',
+  // .../services/firebase/...・.../repositories/firestore/... と、同じ階層からの ../firebase/...・../firestore/...
+  regex: '(^|/)(services/firebase|repositories/firestore)(/|$)|^\\.\\./(firebase|firestore)(/|$)',
+  message:
+    'src/services/firebase/ と src/repositories/firestore/ は src/main.tsx（アプリの組み立て）からのみ import してください（ARCHITECTURE.md 参照）。',
 }
 const restrictReact = {
   group: ['react', 'react/*', 'react-dom', 'react-dom/*', 'react-router', 'react-router/*'],
@@ -58,6 +59,8 @@ const layerRules = [
     forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase, restrictFirebaseLayer, restrictReact],
   },
   { files: ['src/main.tsx'], forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase] },
+  // Security Rules のテストは Firebase のテスト用 SDK を使う
+  { files: ['tests/rules/**'], forbid: [restrictTsFsrs, restrictReact] },
   {
     files: ['src/**', 'tests/**'],
     forbid: [restrictTsFsrs, restrictFsrsInternals, restrictFirebase, restrictFirebaseLayer],

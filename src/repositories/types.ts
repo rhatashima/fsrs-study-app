@@ -48,6 +48,9 @@ export interface ReviewRecord {
  * 学習記録（ReviewState・ReviewLog・MaterialProgress）。
  * 1 回のレビューでこの 3 つを同時に更新する必要があるため、1 つのリポジトリにまとめている。
  * ReviewLog は追記のみ：既存の ReviewLog を変更・削除するメソッドは意図的に用意しない。
+ *
+ * 保存されている ReviewState が壊れている場合、getStates / listDue は
+ * CorruptedReviewStateError を投げる（黙って除外・修復しない。復元は restoreState で明示的に行う）。
  */
 export interface ReviewRepository {
   /** 指定カードの ReviewState（未学習のカードは結果に含まれない） */
@@ -58,12 +61,26 @@ export interface ReviewRepository {
    * （Review の 1 日の上限は設けないため。取得件数は「今日の学習量」に比例する）。
    */
   listDue(materialId: string, options: { dueBefore: Date; limit?: number }): Promise<ReviewState[]>
-  /** ReviewState の保存・ReviewLog の追記・集計の加算をすべて行うか、何も行わない */
+  /**
+   * ReviewState の保存・ReviewLog の追記・集計の加算をすべて行うか、何も行わない。
+   * - 同じ id・同じ内容の ReviewLog がすでにある（再試行・二重送信）：何もせず成功（冪等）
+   * - 同じ id で内容が違う：conflict
+   * - 保存されている ReviewState が log.previousState と一致しない（別の端末で先に学習された等）：conflict
+   */
   recordReview(record: ReviewRecord): Promise<void>
-  /** カードの ReviewLog を新しい順に limit 件（状態の復元・監査用） */
+  /** カードの有効な ReviewLog を新しい順に limit 件（状態の復元・監査用。形式が壊れた履歴は含めない） */
   listLogsForCard(materialId: string, cardId: string, options: { limit: number }): Promise<ReviewLog[]>
+  /** 指定カードのうち、ReviewLog が 1 件以上あるカードの id（ReviewState の欠落の検出用） */
+  findCardsWithLogs(materialId: string, cardIds: readonly string[]): Promise<string[]>
+  /**
+   * 履歴から復元した ReviewState を保存する（ReviewLog・集計は変えない）。
+   * state.lastLogId の ReviewLog が存在し、その nextState と一致する場合だけ保存する（違えば invalid-data）。
+   */
+  restoreState(state: ReviewState): Promise<void>
   /** 教材の集計（まだ学習記録がなければ空の集計） */
   getProgress(materialId: string): Promise<MaterialProgress>
+  /** 集計を丸ごと置き換える（全件からの再集計・初期データの投入用） */
+  replaceProgress(progress: MaterialProgress): Promise<void>
 }
 
 export interface SettingsRepository {

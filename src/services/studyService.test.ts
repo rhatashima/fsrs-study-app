@@ -1,8 +1,16 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { defaultAppSettings, nextStudyItem, type Card } from '../domain'
+import {
+  CorruptedReviewStateError,
+  defaultAppSettings,
+  nextStudyItem,
+  toSchedulingSnapshot,
+  type Card,
+  type ReviewState,
+} from '../domain'
 import { createMemoryRepositories } from '../repositories/memory/createMemoryRepositories'
 import { makeCard, makeMaterial } from '../test/factories'
+import { restoreReviewStates } from './restoreService'
 import {
   loadStudyOverview,
   prepareScheduler,
@@ -201,6 +209,56 @@ describe('学習の一連の流れ（メモリ上のリポジトリ）', () => {
     })
     const next = await startStudySession(repos, 'm1', local(7, 10))
     expect(next.session.newCardIds).toEqual(['c3', 'c4'])
+  })
+})
+
+describe('学習状態の欠落の検出と復元', () => {
+  it('ReviewLog があるのに ReviewState がないカードは、新規として出さずにエラーにする', async () => {
+    const repos = setup({ newCardsPerDay: 3 })
+    const { context, session } = await startStudySession(repos, 'm1', T)
+    await submitReview(repos, context, session, {
+      card: session.cards['c1'] as Card,
+      rating: 'good',
+      reviewedAt: T,
+      durationMs: null,
+    })
+    // 集計のカーソルが戻り、c1 の ReviewState だけが見つからない状態
+    const progress = await repos.reviews.getProgress('m1')
+    await repos.reviews.replaceProgress({ ...progress, newCursorOrder: 0 })
+    const getStates = repos.reviews.getStates.bind(repos.reviews)
+    repos.reviews.getStates = async (materialId, ids) =>
+      (await getStates(materialId, ids)).filter((state) => state.cardId !== 'c1')
+
+    const error = await startStudySession(repos, 'm1', local(6, 12)).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(CorruptedReviewStateError)
+    expect((error as CorruptedReviewStateError).cardIds).toEqual(['c1'])
+  })
+
+  it('最新の有効な ReviewLog の nextState から復元する（ReviewLog と集計は変わらない）', async () => {
+    const repos = setup({ newCardsPerDay: 1 })
+    const { context, session } = await startStudySession(repos, 'm1', T)
+    const first = await submitReview(repos, context, session, {
+      card: session.cards['c1'] as Card,
+      rating: 'good',
+      reviewedAt: T,
+      durationMs: null,
+    })
+    const second = await submitReview(repos, context, first.session, {
+      card: session.cards['c1'] as Card,
+      rating: 'good',
+      reviewedAt: local(6, 10, 11),
+      durationMs: null,
+    })
+    const progressBefore = await repos.reviews.getProgress('m1')
+
+    const result = await restoreReviewStates(repos, 'm1', ['c1', 'c2'], local(6, 12))
+    expect(result).toEqual({ restored: ['c1'], failed: ['c2'] })
+    const [state] = await repos.reviews.getStates('m1', ['c1'])
+    expect(toSchedulingSnapshot(state as ReviewState)).toEqual(second.record.log.nextState)
+    expect(second.record.log.previousState).toEqual(first.record.log.nextState)
+    expect(state).toMatchObject({ lastLogId: second.record.log.id, firstReviewedAt: T, ratingCounts: { good: 2 } })
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 10 })).toHaveLength(2)
+    expect(await repos.reviews.getProgress('m1')).toEqual(progressBefore)
   })
 })
 

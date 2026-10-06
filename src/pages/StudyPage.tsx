@@ -12,7 +12,18 @@ import studyStyles from './StudyPage.module.css'
 const KIND_LABELS = { learning: '学習中', review: '復習', new: '新規' } as const
 
 export function StudyPage() {
-  const { view, reveal, answer, refreshPreviewIfStale, checkAgain } = useStudySession()
+  const { view, reveal, answer, retrySave, restore, refreshPreviewIfStale, checkAgain } = useStudySession()
+
+  // 保存中・保存に失敗したレビューがあるときにページを閉じようとしたら、ブラウザの確認を出す
+  const unsaved = view.status === 'studying' && (view.saving || view.canRetrySave)
+  useEffect(() => {
+    if (!unsaved) return
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [unsaved])
 
   // 別のアプリから戻ってきたとき、古くなった次回予定を計算し直す
   useEffect(() => {
@@ -33,11 +44,32 @@ export function StudyPage() {
           <p className={styles.muted}>学習できる教材がありません。</p>
         </div>
       )}
+      {view.status === 'corrupted' && <Corrupted view={view} onRestore={() => void restore()} />}
       {view.status === 'studying' && (
-        <Studying view={view} onReveal={reveal} onRate={(rating) => void answer(rating)} />
+        <Studying
+          view={view}
+          onReveal={reveal}
+          onRate={(rating) => void answer(rating)}
+          onRetrySave={() => void retrySave()}
+        />
       )}
       {view.status === 'done' && <Done view={view} onCheckAgain={checkAgain} />}
     </section>
+  )
+}
+
+function Corrupted({ view, onRestore }: { view: Extract<StudyView, { status: 'corrupted' }>; onRestore: () => void }) {
+  return (
+    <div className={styles.panel}>
+      <p role="alert">{view.message}</p>
+      <p className={styles.muted}>
+        学習履歴の最新の記録から、学習状態を元に戻します。学習履歴そのものは変更しません。
+      </p>
+      {view.restoreError && <p role="alert">{view.restoreError}</p>}
+      <button type="button" className={styles.primaryButton} onClick={onRestore} disabled={view.restoring}>
+        {view.restoring ? '復元中…' : '学習履歴から復元する'}
+      </button>
+    </div>
   )
 }
 
@@ -45,10 +77,12 @@ function Studying({
   view,
   onReveal,
   onRate,
+  onRetrySave,
 }: {
   view: Extract<StudyView, { status: 'studying' }>
   onReveal: () => void
   onRate: (rating: ReviewRating) => void
+  onRetrySave: () => void
 }) {
   const { item, counts, preview } = view
   const intervals = preview
@@ -72,7 +106,11 @@ function Studying({
       <StudyCard card={item.card} revealed={view.revealed} />
       {view.saveError && <p role="alert">{view.saveError}</p>}
       <div className={studyStyles.actions}>
-        {view.revealed && intervals ? (
+        {view.canRetrySave ? (
+          <button type="button" className={styles.primaryButton} onClick={onRetrySave}>
+            もう一度保存する
+          </button>
+        ) : view.revealed && intervals ? (
           <RatingButtons intervals={intervals} disabled={view.saving} onRate={onRate} />
         ) : (
           <button type="button" className={styles.primaryButton} onClick={onReveal}>

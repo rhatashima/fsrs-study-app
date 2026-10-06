@@ -8,8 +8,8 @@ export default mergeConfig(
       environment: 'jsdom',
       setupFiles: ['./src/test/setup.ts'],
       include: ['src/**/*.test.{ts,tsx}', 'tests/**/*.test.ts'],
-      // Security Rules のテスト（Phase 5）は Emulator が必要なため npm test には含めない
-      exclude: ['tests/rules/**', 'node_modules/**'],
+      // Firestore Emulator が必要なテストは npm test には含めない（npm run test:rules で実行）
+      exclude: ['tests/rules/**', 'src/**/*.emulator.test.ts', 'node_modules/**'],
     },
   }),
 )

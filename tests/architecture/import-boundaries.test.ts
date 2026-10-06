@@ -115,7 +115,15 @@ describe('import boundaries', () => {
       expect(await restrictedImportErrors('src/main.tsx', code)).toHaveLength(0)
     })
 
+    it('src/main.tsx からは Firestore 版リポジトリも import できる', async () => {
+      const firestoreRepo =
+        "import { createFirestoreRepositories } from './repositories/firestore/createFirestoreRepositories'\n"
+      expect(await restrictedImportErrors('src/main.tsx', firestoreRepo)).toHaveLength(0)
+    })
+
     it.each([
+      ['src/pages/StudyPage.tsx', "import { createFirestoreRepositories } from '../repositories/firestore/createFirestoreRepositories'\n"],
+      ['src/repositories/memory/createMemoryRepositories.ts', "import { parseCard } from '../firestore/validation'\n"],
       ['src/pages/LoginPage.tsx', "import { toAppUser } from '../services/firebase/auth'\n"],
       ['src/app/AuthProvider.tsx', "import { getFirebaseApp } from '../services/firebase/app'\n"],
       ['src/services/auth/signInMethod.ts', "import { toAuthAppError } from '../firebase/authErrors'\n"],

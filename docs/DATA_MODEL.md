@@ -1,6 +1,6 @@
 # データモデル (DATA_MODEL)
 
-最終更新: 2026-10-05 / Phase 3
+最終更新: 2026-10-06 / Phase 5
 対象 ts-fsrs バージョン: 5.4.2
 
 ## 0. 設計の原則
@@ -120,7 +120,7 @@ interface ReviewState extends SchedulingSnapshot {   // ReviewState.difficulty =
 
 ```ts
 interface ReviewLog {
-  id: string                                  // クライアントで採番し、ReviewState.lastLogId に入れる
+  id: string                                  // カードを画面に出したときにクライアントで 1 回だけ採番（保存の再試行でも同じ id）。ReviewState.lastLogId に入れる
   materialId: string
   cardId: string
   reviewedAt: Date
@@ -189,7 +189,7 @@ interface MaterialProgress {
 }
 ```
 
-- 集計の意味は純粋関数で定義する：レビュー時の加算は `applyReview`、全件からの作り直しは `rebuildProgress`。Firestore 実装（Phase 5）は `applyReview` と同じ加算を `increment()` で行う。
+- 集計の意味は純粋関数で定義する：レビュー時の加算は `applyReview`、全件からの作り直しは `rebuildProgress`。Firestore 実装もトランザクション内で読み取った集計に `applyReview` を適用して書く（メモリ実装と同じ計算。同時更新はトランザクションのやり直しで解決）。
 - `DayKey` は `"YYYY-MM-DD"`。設定の区切り時刻（初期値 4 時）より前は前日として扱う（`toDayKey`）。
 - 今日の残り新規数：`remainingNewCardsToday(progress, newCardsPerDay, today)`。
 - カードのカテゴリーを後から変えると、過去の評価回数は旧カテゴリーに残る。統計画面の「再集計」（`rebuildProgress`。全 Card + 全 ReviewState を読む。利用者が押したときだけ）で現在のカテゴリーに合わせる。
@@ -223,12 +223,13 @@ FSRS パラメータは全教材共通。新規カード数のみ教材ごと。
 | ホーム | `progress/summary` 1 件 + `reviewStates where suspended == false && due < 学習日の終わり`（Review / 学習中を区別して数えるため状態を取得） | 1 + 今日の期限カード数 |
 | 学習開始：復習・学習中 | `reviewStates where suspended == false && due < 学習日の終わり orderBy due`（Review の 1 日の上限なし）、対応する Card を id で取得（`in` 最大 30 件ずつ） | 期限カード数 × 2 |
 | 学習開始：新規 | `cards where isArchived == false && order > newCursorOrder orderBy order limit (残り新規数)`、念のため対応 ReviewState の有無を id で確認 | 新規数 × 2 程度 |
-| 1 レビュー保存 | batch：ReviewState set + ReviewLog create + progress increment | 書き込み 3 |
+| 1 レビュー保存 | トランザクション：ReviewLog・ReviewState・集計を読み、整合性を確かめてから 3 つを書く | 読み取り 3 + 書き込み 3（Rules の `existsAfter` で読み取り +1） |
+| 新規カードの状態欠落チェック | `reviewLogs where cardId in [新規候補]`（通常 0 件） | 1 |
 | 統計 | `progress/summary` 1 件 | 1 |
 | カード一覧 | `cards orderBy order limit 50`（ページング） | 50 / ページ |
 | インポート | ファイル内 id の Card を取得して差分判定 | ファイル行数 |
 | 再集計（手動） | 全 Card + 全 ReviewState | カード数 × 2 |
-| 状態の復元（欠落時のみ） | `reviewLogs where cardId == x orderBy reviewedAt desc limit 1` | 1 |
+| 状態の復元（利用者が選んだときだけ） | `reviewLogs where cardId == x orderBy reviewedAt desc`（評価回数を数え直すため、そのカードの履歴を読む） | そのカードのレビュー回数 |
 
 ReviewLog は統計表示のために読まない。
 
@@ -266,32 +267,47 @@ castle-001,天守の最上階を何という？,最上重,…,天守,,天守;用
 4. Card と `progress/summary` の件数のみを書き込む（500 件ごとの batch）。既存カードの `createdAt`・`order` は維持。**ReviewState / ReviewLog には触れない。**
 5. ファイルに含まれない既存カードは何もしない。
 
-## 5. Security Rules（概略）
+## 5. Security Rules
 
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function isOwner(uid) {
-      return request.auth != null && request.auth.uid == uid && uid == '__OWNER_UID__';  // build-rules.mjs が置換
-    }
-    match /users/{uid} {
-      match /settings/{doc}                      { allow read, create, update: if isOwner(uid); }
-      match /schedulerConfigs/{c}                { allow read, create: if isOwner(uid); }   // 不変
-      match /materials/{m}                       { allow read, create, update: if isOwner(uid); }
-      match /materials/{m}/cards/{c}             { allow read, create, update: if isOwner(uid); }
-      match /materials/{m}/reviewStates/{c}      { allow read, create, update: if isOwner(uid); }
-      match /materials/{m}/reviewLogs/{l}        { allow read, create: if isOwner(uid); }   // 追記のみ
-      match /materials/{m}/progress/{p}          { allow read, create, update: if isOwner(uid); }
-      match /materials/{m}/examSessions/{e}      { allow read, create: if isOwner(uid); }
-    }
-  }
-}
-```
+正本は `firestore.rules.template`（デプロイする `firestore.rules` は `npm run firebase:prepare` が `.env.local` の `VITE_OWNER_UID` を埋め込んで生成し、Git には入れない）。テストは `tests/rules/firestore.rules.test.ts`（Firestore Emulator）。
 
-delete はすべて禁止。ReviewLog の `rating` が again / hard / good / easy のいずれかであることなど、最低限のフィールド検証を Phase 5 で追加する。
+| パス | read | create | update | delete | 主な検証 |
+|---|---|---|---|---|---|
+| `users/{uid}/settings/app` | Owner | Owner | Owner | ✕ | id が `app`、区切り時刻 0〜23、保持率 0〜1 など |
+| `users/{uid}/schedulerConfigs/{id}` | Owner | Owner | ✕（不変） | ✕ | `id` がドキュメント id と一致 |
+| `users/{uid}/materials/{m}` | Owner | Owner | Owner | ✕ | `id` 一致、タイトル・日時の型 |
+| `…/cards/{c}` | Owner | Owner | Owner | ✕ | `id`・`materialId` 一致、order ≥ 1、難易度・重要度 1〜5 |
+| `…/reviewStates/{c}` | Owner | Owner | Owner | ✕ | `cardId`・`materialId` 一致、FSRS 値の型、**`lastLogId` の ReviewLog が書き込み後に存在すること（`existsAfter`）** |
+| `…/reviewLogs/{l}` | Owner | Owner | **✕（追記のみ）** | **✕** | `id` 一致、評価が 4 種のいずれか、nextState の型、想定外の項目なし |
+| `…/progress/summary` | Owner | Owner | Owner | ✕ | id が `summary`、件数が 0 以上の整数 |
+| 上記以外 | ✕ | ✕ | ✕ | ✕ | 不明なコレクションはすべて拒否 |
+
+- Owner ＝ `request.auth.uid == {uid}` かつ `{uid}` が Owner の UID。クライアントの `VITE_OWNER_UID` は信用せず、Rules に埋め込んだ UID と Firebase Authentication の UID で判定する。
+- 未ログイン・Owner 以外は、自分の UID の下も含めてすべて拒否。
+- 細かな整合性（ReviewState の値が ReviewLog の nextState と一致する等）はアプリ側（トランザクション内の検査）で守る。Rules は型と不変条件（追記のみ・削除禁止・状態は履歴とセット）を守る。
+
+### アプリ側の検証（`src/repositories/firestore/validation.ts`）
+
+Firestore から読んだデータは型注釈を信用せず、必須項目・型・Timestamp・列挙値を確かめてからドメイン型にする（手書きの小さな検証。ライブラリは追加しない）。
+
+- 形式が正しくない ReviewState は `CorruptedReviewStateError` にする（黙って除外・修復しない）。
+- ReviewLog があるのに ReviewState がない新規候補も `CorruptedReviewStateError`（新規として学習すると履歴とつながらない状態で上書きしてしまうため）。
+- 復元は利用者が「学習履歴から復元する」を選んだときだけ：そのカードの有効な ReviewLog のうち最新の `nextState` を ReviewState にし、評価回数と初回日時は履歴から数え直す（再計算はしない）。ReviewLog と集計は変えない。
+- 形式が正しくない ReviewLog は、履歴の一覧（復元の材料）に含めない。
+- 古い形式の設定は、足りない項目を初期値で補う。
+
+### レビュー保存の原子性と二重登録の防止
+
+- 1 回のレビューは Firestore のトランザクションで保存する：ReviewLog（同じ id）・ReviewState・集計を読み、`decideReviewWrite` で判定してから 3 つを書く。途中までだけ保存されることはない。
+- 同じ id・同じ内容の ReviewLog がすでにある（通信の再試行・二重送信）→ 何もせず成功。集計も二重に加算されない。
+- 同じ id で内容が違う、または保存済みの ReviewState が `previousState` と違う（別の端末で先に学習した）→ `conflict`。
+- 集計は読み取った値に `applyReview`（メモリ実装と同じ関数）を適用して書く。同時更新はトランザクションのやり直しで解決される。
+- 画面では、保存に失敗したレビューは「もう一度保存する」で**同じ内容（同じ id・評価・日時）**を再送する。評価ボタンの二重押しは保存中フラグで防ぐ。
 
 ## 6. インデックス（`firestore.indexes.json`）
+
+Git で管理し、`firebase deploy --only firestore:indexes` で反映する（コンソールで手作業では作らない）。Firestore Emulator はインデックスの有無を確認しないため、本番で不足していれば `failed-precondition`（日本語の「データベースの設定（インデックスなど）が不足しています」）になる。
+
 
 | コレクション | フィールド | 用途 |
 |---|---|---|
