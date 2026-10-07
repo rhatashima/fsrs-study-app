@@ -133,7 +133,7 @@ fsrs-study-app/
 | CSV | papaparse | 引用符・改行入り CSV を正しく扱うため自前実装しない |
 | PWA | vite-plugin-pwa | manifest / Service Worker 生成 |
 | テスト | Vitest 5, jsdom, @testing-library/react, @testing-library/user-event | Vite と統合。設定は `vitest.config.ts` |
-| Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5。通常版の `firebase/firestore`）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ。Firestore Lite（`firebase/firestore/lite`）はファイルが約 350 KB 小さくなるが、計測で読み取りが遅かった（最初の 1 回 約 0.9 秒 対 0.4 秒、以降の平均 約 0.43 秒 対 0.22 秒）ため採用していない（2026-10 の性能調査） |
+| Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5。通常版の `firebase/firestore`）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ。Firestore Lite（`firebase/firestore/lite`）も比較検証したが、ファイルは小さくなる一方で、この環境では読み取りの往復時間が通常版より大きかった（最初の 1 回・2 回目以降とも）ため採用していない（2026-10 の性能調査。「性能に関する設計判断」参照） |
 | Firebase CLI | firebase-tools 15.32.1（devDependency、`--save-exact`） | Emulator での Rules テスト、デプロイ |
 | Rules テスト | @firebase/rules-unit-testing 5.0.2 + Firestore Emulator | Java（21 以上を推奨）が必要なため `npm test` とは別コマンド（`npm run test:rules`） |
 | Lint | ESLint 10 (flat config) + typescript-eslint（型情報を使う推奨ルール） | `no-restricted-imports` でレイヤー間の import を制限。制限が働くことは `tests/architecture/import-boundaries.test.ts` で確認 |
@@ -228,7 +228,7 @@ loadStudyOverview(repos, materialId, now): { material, counts }   // ホーム�
 
 ### 読み込みの段（`services/studyService.ts`）
 
-Firestore の 1 往復は約 0.2 秒かかるため、依存関係のない読み取りは同時に行い、順番待ち（段）を減らす。
+Firestore の読み取りは 1 往復ごとにネットワークの待ち時間がかかるため、依存関係のない読み取りは同時に行い、順番待ち（段）を減らす。
 
 | 段 | 同時に読むもの | 依存しているもの |
 |---|---|---|
@@ -255,7 +255,7 @@ Firestore の 1 往復は約 0.2 秒かかるため、依存関係のない読�
   - 失敗：回答を捨てず「前の回答を保存できませんでした」と「もう一度保存する」を表示し、**同じ内容（同じ id・評価・日時・状態）**を再送する。
   - 競合（別の端末で先に学習された等）：再送も上書きもせず「別の端末で学習状態が更新されています」と「最新の状態を読み込む」（Firestore から読み込み直してセッションを作り直す）を表示する。
   - 保存待ちが残ったままページを閉じようとしたら `beforeunload` で確認を出す（保険。保存は評価直後に始まる）。
-  - 計測（保存 約 0.45 秒の条件）：評価 → 次の問題の表示 約 0.46 秒 → 約 0.01 秒。保存そのものの時間は変わらず、次の問題を読む時間と重なる。
+  - 保存そのものの時間は変わらない。保存の待ち時間を、次の問題を読む時間と重ねて見えにくくしている（評価 → 次の問題の表示は端末内の処理だけ）。
 - 複数端末で同じカードを同時に学習した場合：後から保存した側は、保存済みの状態が自分の `previousState` と違うため `conflict`（「別の端末などで先に学習されています。画面を再読み込み…」）になり、上書きしない。集計はトランザクションなのでずれない。
 - Firestore の永続キャッシュ（IndexedDB）は MVP では使わない（複数タブ・古いキャッシュの問題を避け、「安全な同期」を優先）。
 
@@ -264,6 +264,17 @@ Firestore の 1 往復は約 0.2 秒かかるため、依存関係のない読�
 - 読み取り数は教材の総カード数ではなく、**その日に学習する枚数**に比例する。1 日 100 枚の復習 + 10 枚の新規なら、学習開始は約 220 読み取り、ホーム・統計は数回。
 - 全件を読むのは、利用者が押したときだけの「再集計」のみ。
 - 無料枠（読み取り 5 万/日、書き込み 2 万/日）に対して大きな余裕がある。
+
+### 性能に関する設計判断（2026-10 の性能調査）
+
+計測ログ（`src/lib/perf.ts`。開発サーバー、または本番で `localStorage.setItem('fsrs:perf', '1')` のときだけ有効）で調べた結果、次のようにした。数値は調査時の環境での参考値で、仕様ではない。
+
+| 判断 | 内容 | 理由 |
+|---|---|---|
+| Firestore は通常版を使う | Firestore Lite と比較検証したが採用しない | この環境では Lite のほうが読み取りの往復時間が大きかった（最初のリクエストが特に遅く、2 回目以降も遅い応答が混ざった）。学習開始のように読み取りを順番に待つ処理が遅くなるため。Lite はファイルが小さいが、その利点より大きかった |
+| 学習データの読み込みを並列化 | 依存関係ごとの段にまとめて同時に読む。ホームで読んだデータを学習開始で短時間だけ再利用する | 順番待ち（段）の数が待ち時間を決めるため（「読み込みの段」参照） |
+| 評価後の保存は single-flight optimistic navigation | 評価したら次の問題をすぐ表示し、保存（1 つのトランザクション）は裏で行う。保存待ちは最大 1 件で、保存が終わるまで次の評価はできない | 保存の待ち時間を問題を読む時間と重ねる。トランザクションは分けず、保存の順序・失敗時の扱いを単純に保つ（「同期・保存方針」参照） |
+| 先読み（ホーム表示時に学習データを読んでおく）はしない | — | 上の 2 つで十分と判断した。必要になったら再検討する |
 
 ## 6. 認証とアクセス制御
 
