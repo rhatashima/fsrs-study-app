@@ -53,7 +53,7 @@ npm run build
 - データ層は `src/repositories/types.ts` の interface 経由で使う。interface を変えたらメモリ実装とテストも合わせて更新する。
 - FSRS の計算を UI コンポーネントに書かない。FSRS アルゴリズムを独自実装しない。
 - **Card（教材）と ReviewState（FSRS 状態）と ReviewLog（履歴）は別ドキュメント。** Card の作成・更新・インポートで ReviewState / ReviewLog を変更・削除するコードを書かない。
-- ReviewLog は追記のみ（更新・削除しない）。レビューの保存は ReviewLog の id で冪等にする（id はカードを出したときに 1 回だけ採番し、再送では同じ内容を送る）。ReviewState・ReviewLog・集計（progress）は 1 つの batch でアトミックに保存する。ReviewLog には previousState / nextState の FSRS スナップショットと `scheduler`（設定 id・ライブラリのバージョン）を必ず入れる。
+- ReviewLog は追記のみ（更新・削除しない）。レビューの保存は ReviewLog の id で冪等にする（id はカードを出したときに 1 回だけ採番し、再送では同じ内容を送る）。ReviewState・ReviewLog・集計（progress）は 1 つのトランザクションでアトミックに保存する（速度のために分割しない）。評価後は次の問題をすぐ表示してよいが、保存待ちのレビューは常に最大 1 件とし、前の回答の保存が終わるまで次の評価をさせない。保存が終わっていないレビューを保存済みとして数えない。ReviewLog には previousState / nextState の FSRS スナップショットと `scheduler`（設定 id・ライブラリのバージョン）を必ず入れる。
 - 壊れた ReviewState を黙って除外・修復しない（`CorruptedReviewStateError` を投げ、利用者が復元を選ぶ）。Firestore から読んだデータは `validation.ts` で検証する。
 - 画面表示のために教材の全 Card・全 ReviewState・全 ReviewLog を読み込むコードを書かない（例外：利用者が明示的に実行する「再集計」）。必要な分だけをクエリする（`docs/DATA_MODEL.md` §3）。
 - 削除は原則しない。カードは `isArchived` でアーカイブする。

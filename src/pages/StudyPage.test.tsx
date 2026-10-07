@@ -146,85 +146,6 @@ describe('学習画面', () => {
     expect(screen.getByRole('button', { name: '答えを見る' })).toBeEnabled()
   })
 
-  it('保存に失敗したらエラーを表示し、同じ内容でもう一度保存できる', async () => {
-    const { repos, clock, user } = setup()
-    const original = repos.reviews.recordReview.bind(repos.reviews)
-    const sent: ReviewRecord[] = []
-    let fail = true
-    repos.reviews.recordReview = (record) => {
-      sent.push(record)
-      return fail ? Promise.reject(new Error('network')) : original(record)
-    }
-
-    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
-    await user.click(ratingButton(/^正解/))
-    expect(await screen.findByRole('alert')).toHaveTextContent('保存できませんでした')
-    expect(screen.getByText('天守の最上階は？')).toBeInTheDocument()
-    // 評価をやり直すのではなく、同じ結果を再送する
-    expect(screen.queryByRole('group', { name: '自己評価' })).not.toBeInTheDocument()
-
-    // 未保存のままページを閉じようとすると確認が出る
-    const leaving = new Event('beforeunload', { cancelable: true })
-    window.dispatchEvent(leaving)
-    expect(leaving.defaultPrevented).toBe(true)
-
-    fail = false
-    clock.advanceMinutes(3)
-    await user.click(screen.getByRole('button', { name: 'もう一度保存する' }))
-    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
-
-    // 再送は 1 回目と同じ id・評価・日時（押した時刻）
-    expect(sent).toHaveLength(2)
-    expect(sent[1]).toEqual(sent[0])
-    const logs = await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })
-    expect(logs).toHaveLength(1)
-    expect(logs[0]?.reviewedAt).toEqual(START)
-
-    // 保存できた後は確認を出さない
-    const afterSave = new Event('beforeunload', { cancelable: true })
-    window.dispatchEvent(afterSave)
-    expect(afterSave.defaultPrevented).toBe(false)
-  })
-
-  it('サーバーには保存されたが応答が失われた場合も、再送で二重登録しない', async () => {
-    const { repos, user } = setup()
-    const original = repos.reviews.recordReview.bind(repos.reviews)
-    let loseResponse = true
-    repos.reviews.recordReview = async (record) => {
-      await original(record)
-      if (loseResponse) throw new AppError('network', 'サーバーに接続できませんでした。')
-    }
-
-    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
-    await user.click(ratingButton(/^正解/))
-    expect(await screen.findByRole('alert')).toHaveTextContent('サーバーに接続できませんでした。')
-
-    loseResponse = false
-    await user.click(screen.getByRole('button', { name: 'もう一度保存する' }))
-    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
-    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
-    const progress = await repos.reviews.getProgress('m1')
-    expect(progress.ratingCounts.good).toBe(1)
-    expect(progress.studiedCards).toBe(1)
-  })
-
-  it('評価ボタンを素早く 2 回押しても 1 回分だけ保存する', async () => {
-    const { repos, user } = setup()
-    const original = repos.reviews.recordReview.bind(repos.reviews)
-    let calls = 0
-    repos.reviews.recordReview = (record) => {
-      calls += 1
-      return original(record)
-    }
-    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
-    const good = ratingButton(/^正解/)
-    fireEvent.click(good)
-    fireEvent.click(good)
-    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
-    expect(calls).toBe(1)
-    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
-  })
-
   it('学習状態が壊れている・見つからない場合は、学習を止めて履歴からの復元を選べる', async () => {
     const { repos, user } = setup()
     // c1 を学習済みにしてから、ReviewState だけが見つからない状態にする
@@ -263,3 +184,220 @@ describe('学習画面', () => {
     expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
   })
 })
+
+/**
+ * 保存（recordReview）を手動で完了・失敗させられるようにする。
+ * 呼ばれた内容を sent に記録し、release / fail / passThrough で結果を決める。
+ */
+function controlSaves(repos: ReturnType<typeof createMemoryRepositories>) {
+  const original = repos.reviews.recordReview.bind(repos.reviews)
+  const sent: ReviewRecord[] = []
+  const waiting: { resolve: () => void; reject: (e: unknown) => void; record: ReviewRecord }[] = []
+  let passThrough = false
+  repos.reviews.recordReview = (record) => {
+    sent.push(structuredClone(record))
+    if (passThrough) return original(record)
+    return new Promise<void>((resolve, reject) => waiting.push({ resolve, reject, record }))
+  }
+  return {
+    sent,
+    /** 保存待ちを完了させる（実際にメモリ上のリポジトリへ保存する） */
+    async release() {
+      const next = waiting.shift()
+      if (!next) throw new Error('保存待ちがない')
+      await original(next.record)
+      next.resolve()
+    },
+    /** 保存待ちを失敗させる（何も保存しない） */
+    fail(error: unknown) {
+      const next = waiting.shift()
+      if (!next) throw new Error('保存待ちがない')
+      next.reject(error)
+    },
+    /** 実際には保存したが、応答が失われたことにする */
+    async saveButLoseResponse(error: unknown) {
+      const next = waiting.shift()
+      if (!next) throw new Error('保存待ちがない')
+      await original(next.record)
+      next.reject(error)
+    },
+    passThroughFromNowOn() {
+      passThrough = true
+    },
+    get waitingCount() {
+      return waiting.length
+    },
+  }
+}
+
+async function rateFirstCardGood(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+  await user.click(ratingButton(/^正解/))
+}
+
+describe('評価後すぐ次の問題を表示し、保存は裏で行う（保存待ちは最大 1 件）', () => {
+  it('評価の直後に、保存の完了を待たずに次の問題を表示する', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+
+    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+    expect(saves.waitingCount).toBe(1)
+    expect(screen.getByRole('status')).toHaveTextContent('前の回答を保存中…')
+  })
+
+  it('前の回答の保存中も「答えを見る」はできるが、評価はできない。保存が終わると評価できる', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+
+    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+    expect(screen.getByText('模式図')).toBeInTheDocument()
+    for (const name of [/^忘れた/, /^難しい/, /^正解/, /^簡単/]) expect(ratingButton(name)).toBeDisabled()
+    await user.click(ratingButton(/^正解/))
+    expect(saves.sent).toHaveLength(1)
+
+    await saves.release()
+    expect(await screen.findByRole('button', { name: /^正解/ })).toBeEnabled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('保存待ちは常に 1 件：保存中に評価しても 2 件目の保存は始まらない', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+    fireEvent.click(ratingButton(/^簡単/))
+    fireEvent.click(ratingButton(/^正解/))
+    expect(saves.sent).toHaveLength(1)
+    expect(saves.waitingCount).toBe(1)
+  })
+
+  it('評価ボタンを素早く 2 回押しても、保存は 1 回だけ', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    saves.passThroughFromNowOn()
+    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+    const good = ratingButton(/^正解/)
+    fireEvent.click(good)
+    fireEvent.click(good)
+    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+    expect(saves.sent).toHaveLength(1)
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
+  })
+
+  it('保存が終わるまでは、学習状態・学習履歴・集計のどれも保存されておらず、終わると 3 つとも保存される', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+    await screen.findByText('この画像は？')
+
+    expect(await repos.reviews.getStates('m1', ['c1'])).toEqual([])
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toEqual([])
+    expect((await repos.reviews.getProgress('m1')).studiedCards).toBe(0)
+
+    await saves.release()
+    await screen.findByText('この画像は？')
+    expect(await repos.reviews.getStates('m1', ['c1'])).toHaveLength(1)
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
+    expect((await repos.reviews.getProgress('m1')).studiedCards).toBe(1)
+  })
+
+  it('保存が終わっていない回答は、今回の回答数・件数に数えない（保存が終わると数える）', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+    // 保存待ちのまま次のカード（c2）を表示中：新規の件数は保存済みのものだけで数える
+    expect(await screen.findByText('この画像は？')).toBeInTheDocument()
+    expect(screen.getByText(/新規 2/)).toBeInTheDocument()
+    await saves.release()
+    await user.click(await screen.findByRole('button', { name: '答えを見る' }))
+    expect(await screen.findByText(/新規 1/)).toBeInTheDocument()
+
+    // 2 枚目を評価（最後のカード）→ 完了画面。保存が終わるまでは今回の回答は 1 問
+    await user.click(ratingButton(/^簡単/))
+    expect(await screen.findByRole('heading', { name: '前の回答の保存を待っています' })).toBeInTheDocument()
+    expect(screen.getByText('今回の回答 1問')).toBeInTheDocument()
+    await saves.release()
+    expect(await screen.findByText('今回の回答 2問')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '前の回答の保存を待っています' })).not.toBeInTheDocument()
+  })
+
+  it('保存に失敗しても回答は捨てず、同じ内容（id・日時・評価・状態）で再送できる。再送が成功すると元に戻る', async () => {
+    const { repos, clock, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+    saves.fail(new AppError('network', 'サーバーに接続できませんでした。'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('前の回答を保存できませんでした')
+    expect(screen.getByText('この画像は？')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '答えを見る' }))
+    expect(ratingButton(/^正解/)).toBeDisabled()
+
+    // 未保存のままページを閉じようとすると確認が出る
+    const leaving = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(leaving)
+    expect(leaving.defaultPrevented).toBe(true)
+
+    clock.advanceMinutes(3)
+    await user.click(screen.getByRole('button', { name: 'もう一度保存する' }))
+    expect(saves.sent).toHaveLength(2)
+    expect(saves.sent[1]).toEqual(saves.sent[0])
+    expect(saves.sent[1]?.log.reviewedAt).toEqual(START)
+    await saves.release()
+
+    expect(await screen.findByRole('button', { name: /^正解/ })).toBeEnabled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    const logs = await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })
+    expect(logs).toHaveLength(1)
+    expect(logs[0]?.id).toBe(saves.sent[0]?.log.id)
+    // 保存できた後は確認を出さない（画面の更新を待つ）
+    await expect
+      .poll(() => {
+        const afterSave = new Event('beforeunload', { cancelable: true })
+        window.dispatchEvent(afterSave)
+        return afterSave.defaultPrevented
+      })
+      .toBe(false)
+  })
+
+  it('サーバーには保存されたが応答が失われた場合も、再送で二重登録しない', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+    await saves.saveButLoseResponse(new AppError('network', 'サーバーに接続できませんでした。'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('前の回答を保存できませんでした')
+
+    await user.click(screen.getByRole('button', { name: 'もう一度保存する' }))
+    await saves.release()
+    await waitForNoAlert()
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toHaveLength(1)
+    const progress = await repos.reviews.getProgress('m1')
+    expect(progress.ratingCounts.good).toBe(1)
+    expect(progress.studiedCards).toBe(1)
+  })
+
+  it('別の端末で先に更新されていた（競合）場合は、再送せず上書きもせず、最新の状態を読み込み直せる', async () => {
+    const { repos, user } = setup()
+    const saves = controlSaves(repos)
+    await rateFirstCardGood(user)
+    saves.fail(new AppError('conflict', 'このカードは別の端末などで先に学習されています。'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('別の端末で学習状態が更新されています')
+    expect(screen.queryByRole('button', { name: 'もう一度保存する' })).not.toBeInTheDocument()
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toEqual([])
+    expect(saves.sent).toHaveLength(1)
+
+    saves.passThroughFromNowOn()
+    await user.click(screen.getByRole('button', { name: '最新の状態を読み込む' }))
+    // 読み込み直すと、保存されていない c1 から学習をやり直せる
+    expect(await screen.findByText('天守の最上階は？')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(saves.sent).toHaveLength(1)
+  })
+})
+
+async function waitForNoAlert() {
+  await expect.poll(() => screen.queryByRole('alert')).toBeNull()
+}
+
