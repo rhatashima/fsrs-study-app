@@ -4,6 +4,7 @@ import { useClock } from '../app/clockContext'
 import { useRepositories } from '../app/repositoryContext'
 import { isCorruptedReviewStateError } from '../domain'
 import { errorMessage } from '../lib/errorMessage'
+import { perfAsync, perfBegin, perfMark } from '../lib/perf'
 import { formatInterval } from '../lib/formatInterval'
 import { loadStudyOverview, selectCurrentMaterial, type StudyOverview } from '../services/studyService'
 import styles from './Page.module.css'
@@ -24,13 +25,15 @@ export function HomePage() {
     let cancelled = false
     void (async () => {
       try {
-        const material = await selectCurrentMaterial(repos)
+        perfMark('home:load-start')
+        const material = await perfAsync('home:selectCurrentMaterial', () => selectCurrentMaterial(repos))
         if (!material) {
           if (!cancelled) setState({ status: 'no-material' })
           return
         }
         const now = clock()
-        const overview = await loadStudyOverview(repos, material.id, now)
+        const overview = await perfAsync('home:loadStudyOverview', () => loadStudyOverview(repos, material.id, now))
+        perfMark('home:data-loaded')
         if (!cancelled) setState({ status: 'loaded', overview, now })
       } catch (error) {
         if (!cancelled) {
@@ -97,7 +100,7 @@ function Overview({ overview, now }: { overview: StudyOverview; now: Date }) {
             : '今日の学習は完了しています。'}
         </p>
       )}
-      <Link to="/study" className={styles.primaryButton}>
+      <Link to="/study" className={styles.primaryButton} onClick={() => perfBegin('study-start')}>
         学習を始める
       </Link>
     </>

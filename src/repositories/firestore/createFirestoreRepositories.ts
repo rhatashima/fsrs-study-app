@@ -34,6 +34,7 @@ import type {
   ReviewRepository,
   SettingsRepository,
 } from '../types'
+import { perfAsync } from '../../lib/perf'
 import { assertConsistentRecord, assertRestorableState, assertValidCard, decideReviewWrite } from '../writeRules'
 import { guard } from './errors'
 import { toFirestoreData } from './serialization'
@@ -75,6 +76,11 @@ export function createFirestoreRepositories(
   const clock = options.clock ?? (() => new Date())
   const base = `users/${uid}`
 
+  /** Firestore の 1 回の読み取りを計測する（計測が無効なら何もしない）。docs は課金される読み取り数の目安 */
+  const timed = <T>(label: string, fn: () => Promise<T>, docs: (result: T) => number) =>
+    perfAsync(`firestore:${label}`, fn, (result) => ({ docs: docs(result) }))
+  const queryDocs = (snapshot: { docs: unknown[] }) => Math.max(1, snapshot.docs.length)
+
   const materialRef = (materialId: string) => doc(db, base, 'materials', materialId)
   const cardsCol = (materialId: string) => collection(db, base, 'materials', materialId, 'cards')
   const statesCol = (materialId: string) => collection(db, base, 'materials', materialId, 'reviewStates')
@@ -106,13 +112,15 @@ export function createFirestoreRepositories(
   ): Promise<QueryDocumentSnapshot[]> {
     const unique = [...new Set(ids)]
     const results = await Promise.all(
-      chunk(unique, IN_QUERY_LIMIT).map((part) => getDocs(query(col, where(documentId(), 'in', part)))),
+      chunk(unique, IN_QUERY_LIMIT).map((part) =>
+        timed(`${col.id}.byIds`, () => getDocs(query(col, where(documentId(), 'in', part))), queryDocs),
+      ),
     )
     return results.flatMap((snapshot) => snapshot.docs)
   }
 
   async function requireMaterial(materialId: string): Promise<void> {
-    if (!(await getDoc(materialRef(materialId))).exists()) {
+    if (!(await timed('material.exists', () => getDoc(materialRef(materialId)), () => 1)).exists()) {
       throw new AppError('not-found', `教材が見つかりません（${materialId}）。`)
     }
   }
@@ -120,12 +128,12 @@ export function createFirestoreRepositories(
   const materials: MaterialRepository = {
     list: () =>
       guard(async () => {
-        const snapshot = await getDocs(collection(db, base, 'materials'))
+        const snapshot = await timed('materials.list', () => getDocs(collection(db, base, 'materials')), queryDocs)
         return snapshot.docs.map((d) => parseMaterial(d.id, d.data()))
       }),
     get: (materialId) =>
       guard(async () => {
-        const snapshot = await getDoc(materialRef(materialId))
+        const snapshot = await timed('material.get', () => getDoc(materialRef(materialId)), () => 1)
         return snapshot.exists() ? parseMaterial(snapshot.id, snapshot.data()) : null
       }),
     save: (material) => guard(() => setDoc(materialRef(material.id), toFirestoreData(material))),
@@ -144,7 +152,7 @@ export function createFirestoreRepositories(
     listNewCandidates: (materialId, { afterOrder, limit }) =>
       guard(async () => {
         if (limit <= 0) return []
-        const snapshot = await getDocs(
+        const snapshot = await timed('cards.newCandidates', () => getDocs(
           query(
             cardsCol(materialId),
             where('isArchived', '==', false),
@@ -152,12 +160,12 @@ export function createFirestoreRepositories(
             orderBy('order'),
             limitTo(limit),
           ),
-        )
+        ), queryDocs)
         return snapshot.docs.map((d) => parseCard(materialId, d.id, d.data()))
       }),
     countActive: (materialId) =>
       guard(async () => {
-        const snapshot = await getCountFromServer(query(cardsCol(materialId), where('isArchived', '==', false)))
+        const snapshot = await timed('cards.count', () => getCountFromServer(query(cardsCol(materialId), where('isArchived', '==', false))), () => 1)
         return snapshot.data().count
       }),
     saveMany: (newCards) =>
@@ -193,7 +201,7 @@ export function createFirestoreRepositories(
           ...(limit === undefined ? [] : [limitTo(Math.max(1, limit))]),
         ]
         if (limit !== undefined && limit <= 0) return []
-        const snapshot = await getDocs(query(statesCol(materialId), ...constraints))
+        const snapshot = await timed('reviewStates.due', () => getDocs(query(statesCol(materialId), ...constraints)), queryDocs)
         return parseStates(materialId, snapshot.docs)
       }),
     recordReview: (record) =>
@@ -204,7 +212,9 @@ export function createFirestoreRepositories(
         const logRef = doc(logsCol(log.materialId), log.id)
         // ReviewState・ReviewLog・集計を読み、整合性を確かめてから 3 つを同時に書く。
         // 他の端末と同時に更新した場合、Firestore がトランザクションをやり直す。
-        await runTransaction(db, async (tx) => {
+        let attempts = 0
+        await timed('tx.recordReview', () => runTransaction(db, async (tx) => {
+          attempts += 1
           const [logSnap, stateSnap, progressSnap] = await Promise.all([
             tx.get(logRef),
             tx.get(stateRef),
@@ -234,14 +244,14 @@ export function createFirestoreRepositories(
           tx.set(logRef, toFirestoreData(log))
           tx.set(stateRef, toFirestoreData(state))
           tx.set(progressRef(log.materialId), toFirestoreData(applyReview(progress, log, context)))
-        })
+        }), () => 3 * attempts)
       }),
     listLogsForCard: (materialId, cardId, { limit }) =>
       guard(async () => {
         if (limit <= 0) return []
-        const snapshot = await getDocs(
+        const snapshot = await timed('reviewLogs.forCard', () => getDocs(
           query(logsCol(materialId), where('cardId', '==', cardId), orderBy('reviewedAt', 'desc'), limitTo(limit)),
-        )
+        ), queryDocs)
         // 形式が壊れた履歴は含めない（復元には有効な履歴だけを使う）
         return snapshot.docs.flatMap((d) => {
           try {
@@ -255,7 +265,9 @@ export function createFirestoreRepositories(
       guard(async () => {
         const unique = [...new Set(cardIds)]
         const results = await Promise.all(
-          chunk(unique, IN_QUERY_LIMIT).map((part) => getDocs(query(logsCol(materialId), where('cardId', 'in', part)))),
+          chunk(unique, IN_QUERY_LIMIT).map((part) =>
+            timed('reviewLogs.cardIn', () => getDocs(query(logsCol(materialId), where('cardId', 'in', part))), queryDocs),
+          ),
         )
         const withLogs = new Set(results.flatMap((s) => s.docs.map((d) => d.get('cardId') as unknown)))
         return cardIds.filter((id) => withLogs.has(id))
@@ -271,7 +283,7 @@ export function createFirestoreRepositories(
       }),
     getProgress: (materialId) =>
       guard(async () => {
-        const snapshot = await getDoc(progressRef(materialId))
+        const snapshot = await timed('progress.get', () => getDoc(progressRef(materialId)), () => 1)
         return snapshot.exists() ? parseProgress(materialId, snapshot.data()) : emptyProgress(materialId, clock())
       }),
     replaceProgress: (progress) =>
@@ -281,13 +293,13 @@ export function createFirestoreRepositories(
   const settings: SettingsRepository = {
     getSettings: () =>
       guard(async () => {
-        const snapshot = await getDoc(settingsRef)
+        const snapshot = await timed('settings.get', () => getDoc(settingsRef), () => 1)
         return snapshot.exists() ? parseSettings(snapshot.data(), clock()) : defaultAppSettings(clock())
       }),
     saveSettings: (next) => guard(() => setDoc(settingsRef, toFirestoreData(next))),
     getSchedulerConfig: (configId) =>
       guard(async () => {
-        const snapshot = await getDoc(configRef(configId))
+        const snapshot = await timed('schedulerConfig.get', () => getDoc(configRef(configId)), () => 1)
         return snapshot.exists() ? parseSchedulerConfig(snapshot.id, snapshot.data()) : null
       }),
     saveSchedulerConfig: (config) =>

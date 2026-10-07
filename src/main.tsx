@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
+import { perfMark } from './lib/perf'
 import { AuthProvider } from './app/AuthProvider'
 import { RepositoryFactoryContext, type RepositoryFactory } from './app/repositoryContext'
 import { routes } from './app/routes'
@@ -13,6 +14,7 @@ import { readFirebaseConfig } from './services/firebase/config'
 import { getFirestoreDb } from './services/firebase/firestore'
 import './styles/global.css'
 
+perfMark('app:main-start')
 const rootElement = document.getElementById('root')
 if (!rootElement) {
   throw new Error('#root element not found')
@@ -35,6 +37,7 @@ if (!firebase.ok) {
   // ログインした Owner のデータ（Firestore の users/{uid}/...）を使う
   const createRepositories: RepositoryFactory = (user) => createFirestoreRepositories(db, user.uid)
 
+  perfMark('app:firebase-initialized')
   root.render(
     <StrictMode>
       <AuthProvider gateway={gateway} ownerUid={firebase.ownerUid}>

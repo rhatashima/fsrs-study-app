@@ -18,6 +18,7 @@ import {
 import { errorMessage } from '../lib/errorMessage'
 import type { RatingPreview } from '../lib/fsrs'
 import { createId } from '../lib/id'
+import { perfAsync, perfBegin, perfEnd, perfStart } from '../lib/perf'
 import type { ReviewRecord } from '../repositories/types'
 import { restoreReviewStates } from '../services/restoreService'
 import {
@@ -150,13 +151,15 @@ export function useStudySession() {
     let cancelled = false
     void (async () => {
       try {
-        const material = await selectCurrentMaterial(repos)
+        const material = await perfAsync('study:selectCurrentMaterial', () => selectCurrentMaterial(repos))
         if (!material) {
           if (!cancelled) setState({ status: 'no-material' })
           return
         }
         const now = clock()
-        const { context, session } = await startStudySession(repos, material.id, now)
+        const { context, session } = await perfAsync('study:startStudySession', () =>
+          startStudySession(repos, material.id, now),
+        )
         if (!cancelled) setState({ status: 'ready', context, ...advance(session, now) })
       } catch (error) {
         if (!cancelled) setState(toFailure(error, '学習データを読み込めませんでした。再読み込みしてください。'))
@@ -170,11 +173,15 @@ export function useStudySession() {
   const computePreview = useCallback((item: CurrentItem, context: StudyContext): Preview => {
     const now = clock()
     const snapshot = item.state ? toSchedulingSnapshot(item.state) : null
-    return { computedAt: now, outcomes: context.scheduler.preview(snapshot, now) }
+    const done = perfStart('study:preview-compute')
+    const outcomes = context.scheduler.preview(snapshot, now)
+    done()
+    return { computedAt: now, outcomes }
   }, [clock])
 
   const reveal = useCallback(() => {
     if (state.status !== 'ready' || !state.item || state.revealed) return
+    perfBegin('reveal')
     setState({ ...state, revealed: true, preview: computePreview(state.item, state.context) })
   }, [state, computePreview])
 
@@ -192,7 +199,7 @@ export function useStudySession() {
       savingRef.current = true
       setState({ ...ready, saving: true, saveError: null, pendingRecord: record })
       try {
-        const session = await saveReview(repos, ready.session, record)
+        const session = await perfAsync('study:saveReview', () => saveReview(repos, ready.session, record))
         setState({ status: 'ready', context: ready.context, ...advance(session, clock()) })
       } catch (error) {
         if (isCorruptedReviewStateError(error)) {
@@ -215,6 +222,7 @@ export function useStudySession() {
   const answer = useCallback(
     async (rating: ReviewRating) => {
       if (state.status !== 'ready' || !state.item || !state.revealed || state.saving || state.pendingRecord) return
+      perfBegin('rate')
       // 正式なレビュー日時 = ボタンを押した時刻
       const reviewedAt = clock()
       const record = buildReview(
@@ -265,6 +273,19 @@ export function useStudySession() {
     if (state.status !== 'ready') return
     setState({ ...state, ...advance(state.session, clock()) })
   }, [state, clock])
+
+  // 計測：画面に反映された時点（計測が無効なら何もしない）
+  // reviewId はカードを出すたびに新しくなる（同じカードの再出題も区別できる）
+  const shownReviewId = state.status === 'ready' ? state.reviewId : null
+  const revealed = state.status === 'ready' && state.revealed
+  useEffect(() => {
+    if (shownReviewId === null) return
+    perfEnd('study-start', 'study:first-card-shown')
+    perfEnd('rate', 'study:next-card-shown')
+  }, [shownReviewId])
+  useEffect(() => {
+    if (revealed) perfEnd('reveal', 'study:preview-shown')
+  }, [revealed])
 
   return { view: toView(state), reveal, answer, retrySave, restore, refreshPreviewIfStale, checkAgain }
 }

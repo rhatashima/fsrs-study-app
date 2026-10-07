@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { isAppError } from '../domain'
 import { errorMessage } from '../lib/errorMessage'
+import { perfAsync, perfMark } from '../lib/perf'
 import { isOwner } from '../services/auth/authorization'
 import {
   canFallBackToRedirect,
@@ -34,12 +35,16 @@ export function AuthProvider({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    let first = true
+    perfMark('auth:subscribe')
     const unsubscribe = gateway.onAuthStateChanged((next) => {
+      if (first) perfMark('auth:resolved', { signedIn: next !== null })
+      first = false
       setUser(next)
       if (next) setError(null)
     })
     // リダイレクト方式のログインから戻ってきた場合、失敗していればここで分かる
-    gateway.completeRedirectSignIn().catch((e: unknown) => {
+    perfAsync('auth:getRedirectResult', () => gateway.completeRedirectSignIn()).catch((e: unknown) => {
       if (!(isAppError(e) && e.kind === 'cancelled')) setError(errorMessage(e, LOGIN_FAILED))
     })
     return unsubscribe
