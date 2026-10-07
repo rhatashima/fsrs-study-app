@@ -1,5 +1,6 @@
 import type { RouteObject } from 'react-router'
 import { HomePage } from '../pages/HomePage'
+import { ImportPage } from '../pages/ImportPage'
 import { MaterialsPage } from '../pages/MaterialsPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
 import { SettingsPage } from '../pages/SettingsPage'
@@ -23,6 +24,7 @@ export const routes: RouteObject[] = [
       { index: true, element: <HomePage /> },
       { path: 'study', element: <StudyPage /> },
       { path: 'materials', element: <MaterialsPage /> },
+      { path: 'materials/:materialId/import', element: <ImportPage /> },
       { path: 'stats', element: <StatsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: '*', element: <NotFoundPage /> },

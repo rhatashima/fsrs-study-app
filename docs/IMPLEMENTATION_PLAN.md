@@ -86,10 +86,12 @@
 - 未着手：ホーム表示後の学習データの先読み（案 C。現時点では不要と判断）。
 - 本番デプロイ（Hosting）・実機確認・Firestore の整合性確認まで完了（2026-10-07）。
 
-### Phase 6：CSV / JSON インポート（branch: `feature/import`）
-- `services/import/`（papaparse, zod 検証, 差分分類）とインポート画面（プレビュー → 更新/スキップ選択 → 確定）。
-- テスト：CSV/JSON パース、BOM、必須欠落、不正な数値、ファイル内重複、新規/更新/変更なし分類、更新時に ReviewState / ReviewLog が保持されること。
-- コミット例：`feat: add CSV and JSON card import`, `test: add import validation tests`
+### Phase 6：CSV / JSON インポート（branch: `feature/import`）実装済み・本番確認待ち
+- `src/services/import/`：parse（papaparse / JSON）→ normalize・検証 → plan（新規・更新・変更なし）→ execute（400 件ずつ保存 → 集計を全件から作り直し）。仕様は DATA_MODEL.md §4。
+- インポート画面（教材 → 問題をインポート）：ファイル選択 → プレビュー → 実行（進捗）→ 結果。検証エラーの表示、二重実行の防止、取り込み中の離脱確認、途中失敗時の再実行の案内、集計の作り直しのやり直し。
+- リポジトリに `getMaxOrder` / `listAll`（カード）、`listAllStates`（学習状態）を追加。Firestore の一括書き込みは 400 件ずつ。
+- サンプル：`samples/import/castle-3-sample.csv`（日本城郭検定3級・開発用ダミー）、`samples/import/test-material-sample.json`（テスト用教材）。
+- 本物の教材の作成は、本番での動作確認の後の別フェーズで行う。
 
 ### Phase 7：複数教材（branch: `feature/materials`）
 - 教材の作成・編集（名前・説明・新規カード数・有効/無効）、選択した教材の記憶（`lastMaterialId`）、カード一覧とアーカイブ。

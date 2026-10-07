@@ -143,6 +143,9 @@ export function createMemoryRepositories(
       ),
     countActive: (materialId) =>
       run(() => valuesOf(store.cards, materialId).filter((card) => !card.isArchived).length),
+    getMaxOrder: (materialId) =>
+      run(() => valuesOf(store.cards, materialId).reduce((max, card) => Math.max(max, card.order), 0)),
+    listAll: (materialId) => run(() => valuesOf(store.cards, materialId).map(copy)),
     saveMany: (newCards) =>
       run(() => {
         // すべて検証してから保存する（途中で失敗したときに一部だけ保存されないように）
@@ -188,6 +191,7 @@ export function createMemoryRepositories(
           .slice(0, Math.max(0, limit))
           .map(copy),
       ),
+    listAllStates: (materialId) => run(() => valuesOf(store.states, materialId).map(copy)),
     findCardsWithLogs: (materialId, cardIds) =>
       run(() => {
         const withLogs = new Set((store.logs.get(materialId) ?? []).map((log) => log.cardId))

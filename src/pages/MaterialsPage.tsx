@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router'
 import { useRepositories } from '../app/repositoryContext'
 import { unstudiedCards, type MaterialProgress, type StudyMaterial } from '../domain'
 import styles from './Page.module.css'
@@ -54,6 +55,7 @@ export function MaterialsPage() {
             <p className={styles.muted}>
               カード {progress.totalCards} 枚（未学習 {unstudiedCards(progress)} 枚）
             </p>
+            <Link to={`/materials/${encodeURIComponent(material.id)}/import`}>問題をインポート</Link>
           </article>
         ))}
     </section>

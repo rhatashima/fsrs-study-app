@@ -6,13 +6,14 @@
 - 教材は CSV / JSON で一括登録し、PC とスマートフォン（PWA）の複数端末で同じ学習履歴を使います。
 - 利用者は 1 名のみ（一般公開しません）。
 
-> **現在開発中です（Phase 5：Firestore への保存・Security Rules まで実装。本番デプロイ前）。** Google アカウントでログインし、FSRS（ts-fsrs 5.4.2）で学習した結果が Cloud Firestore に保存されます。再読み込みや別の端末でも同じ学習状態を使えます。教材の CSV / JSON インポートはまだありません（開発サーバーでダミー教材を投入できます）。 進捗は [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) を参照してください。
+> **現在開発中です（Phase 6：教材の CSV / JSON インポートまで実装）。** Google アカウントでログインし、FSRS（ts-fsrs 5.4.2）で学習した結果が Cloud Firestore に保存されます。再読み込みや別の端末でも同じ学習状態を使えます。教材は CSV / JSON でインポートできます。進捗は [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) を参照してください。
 
 ### 今できること（`.env.local` を設定して `npm run dev` で起動）
 
 - ログイン：Google アカウント（許可した 1 アカウントのみ）。設定画面からログアウト
 - 保存：学習状態・学習履歴・集計を Firestore に保存（`users/{自分の UID}/...`。Owner 以外は Security Rules で拒否）
 - 開発用：開発サーバーの設定画面の「ダミーデータを投入」（本番ビルドには含まれない）
+- 教材のインポート：教材画面 →「問題をインポート」で CSV / JSON を取り込む（プレビューを確認してから実行。学習履歴はそのまま。形式は [docs/DATA_MODEL.md](docs/DATA_MODEL.md) §4、サンプルは `samples/import/`）
 - ホーム：選択中の教材、今日の復習数・学習中で今出せる数・今日の新規数
 - 学習：問題 → 「答えを見る」→ 正答・解説 → 忘れた / 難しい / 正解 / 簡単（Again / Hard / Good / Easy、それぞれの次回予定つき）→ 次の問題
 - 画像付きの問題（ダミーの SVG）

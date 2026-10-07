@@ -30,7 +30,17 @@ export interface CardRepository {
   listNewCandidates(materialId: string, options: { afterOrder: number; limit: number }): Promise<Card[]>
   /** アーカイブされていないカードの件数 */
   countActive(materialId: string): Promise<number>
-  /** 作成または更新（Card のみ。ReviewState / ReviewLog には触れない） */
+  /** 教材内のカードの order の最大値（カードがなければ 0。アーカイブ済みも含む）。新規カードの採番に使う */
+  getMaxOrder(materialId: string): Promise<number>
+  /**
+   * 教材のすべてのカード（アーカイブ済みも含む）。
+   * 全件を読むため、利用者が明示的に実行する処理（インポート後・手動の再集計）でだけ使う
+   */
+  listAll(materialId: string): Promise<Card[]>
+  /**
+   * 作成または更新（Card のみ。ReviewState / ReviewLog には触れない）。
+   * 1 回の呼び出しの中身はすべて保存されるか、何も保存されない（呼び出し側は 1 回 400 件以下にする）
+   */
   saveMany(cards: readonly Card[]): Promise<void>
 }
 
@@ -70,6 +80,11 @@ export interface ReviewRepository {
   recordReview(record: ReviewRecord): Promise<void>
   /** カードの有効な ReviewLog を新しい順に limit 件（状態の復元・監査用。形式が壊れた履歴は含めない） */
   listLogsForCard(materialId: string, cardId: string, options: { limit: number }): Promise<ReviewLog[]>
+  /**
+   * 教材のすべての ReviewState。全件を読むため、集計の作り直し（インポート後・手動の再集計）でだけ使う。
+   * 壊れたものがあれば CorruptedReviewStateError
+   */
+  listAllStates(materialId: string): Promise<ReviewState[]>
   /** 指定カードのうち、ReviewLog が 1 件以上あるカードの id（ReviewState の欠落の検出用） */
   findCardsWithLogs(materialId: string, cardIds: readonly string[]): Promise<string[]>
   /**

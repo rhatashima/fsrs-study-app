@@ -107,6 +107,28 @@ export function describeRepositoryContract(name: string, createEmpty: () => Prom
         expect(await repos.cards.listNewCandidates('m1', { afterOrder: 0, limit: 0 })).toEqual([])
       })
 
+      it('order の最大値（アーカイブ済みも含む。カードがなければ 0）', async () => {
+        const repos = await setup()
+        expect(await repos.cards.getMaxOrder('m1')).toBe(4)
+        expect(await repos.cards.getMaxOrder('m2')).toBe(1)
+        await repos.materials.save(makeMaterial({ id: 'empty' }))
+        expect(await repos.cards.getMaxOrder('empty')).toBe(0)
+      })
+
+      it('教材のすべてのカード（アーカイブ済みも含む）', async () => {
+        const repos = await setup()
+        expect((await repos.cards.listAll('m1')).map((c) => c.id).sort()).toEqual(['c1', 'c2', 'c3', 'c4'])
+        expect(await repos.cards.listAll('m2')).toEqual([CARDS[4]])
+      })
+
+      it('400 件を一度に保存できる（すべて保存される）', async () => {
+        const repos = await setup()
+        const many = Array.from({ length: 400 }, (_, i) => makeCard({ id: `bulk-${i}`, order: 1000 + i }))
+        await repos.cards.saveMany(many)
+        expect(await repos.cards.countActive('m1')).toBe(403)
+        expect(await repos.cards.getMaxOrder('m1')).toBe(1399)
+      })
+
       it('不正な id のカードは保存せず、1 件でも不正なら何も保存しない', async () => {
         const repos = await setup()
         await expect(
@@ -204,6 +226,15 @@ export function describeRepositoryContract(name: string, createEmpty: () => Prom
         expect(await repos.reviews.listDue('m1', { dueBefore: hoursAfter(T0, 48) })).toEqual([])
       })
 
+      it('教材のすべての ReviewState', async () => {
+        const repos = await setup()
+        expect(await repos.reviews.listAllStates('m1')).toEqual([])
+        const record = makeReviewRecord({ cardId: 'c2', logId: 'l1' })
+        await repos.reviews.recordReview(record)
+        expect(await repos.reviews.listAllStates('m1')).toEqual([record.state])
+        expect(await repos.reviews.listAllStates('m2')).toEqual([])
+      })
+
       it('ReviewLog がある カードを見つける', async () => {
         const repos = await setup()
         await repos.reviews.recordReview(makeReviewRecord({ cardId: 'c2', logId: 'l1' }))
@@ -220,6 +251,7 @@ export function describeRepositoryContract(name: string, createEmpty: () => Prom
             | 'listDue'
             | 'recordReview'
             | 'listLogsForCard'
+            | 'listAllStates'
             | 'findCardsWithLogs'
             | 'restoreState'
             | 'getProgress'

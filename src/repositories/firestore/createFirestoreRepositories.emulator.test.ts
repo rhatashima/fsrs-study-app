@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import rulesTemplate from '../../../firestore.rules.template?raw'
 import { AppError, CorruptedReviewStateError, rebuildProgress } from '../../domain'
 import { makeCard, makeMaterial, makeReviewRecord, T0 } from '../../test/factories'
+import { executeImport, parseImportFile, planImport } from '../../services/import'
 import { describeRepositoryContract } from '../repositoryContract'
 import { createFirestoreRepositories } from './createFirestoreRepositories'
 
@@ -135,3 +136,39 @@ describe('Firestore 固有', () => {
     await expect(anonymous.cards.getByIds('m1', ['c1'])).rejects.toMatchObject({ kind: 'permission-denied' })
   })
 })
+
+describe('Firestore への教材インポート（Security Rules あり）', () => {
+  const csvOf = (count: number, edit = '') =>
+    ['id,question,answer,category,tags,examDifficulty']
+      .concat(Array.from({ length: count }, (_, i) => `n${i},問題 ${i}${edit},答え ${i},天守,a;b,${(i % 5) + 1}`))
+      .join('\n')
+
+  async function importCsv(repos: Awaited<ReturnType<typeof setupWithCards>>, text: string) {
+    const parsed = parseImportFile('cards.csv', text, 'm1')
+    expect(parsed.errors).toEqual([])
+    const plan = await planImport(repos, 'm1', parsed.rows, T0)
+    return { plan, result: await executeImport(repos, plan, { now: T0 }) }
+  }
+
+  it('450 件を 400 件ずつ保存し、集計を作り直す。学習記録は変わらない。もう一度取り込むと変更なし', async () => {
+    const repos = await setupWithCards()
+    const record = makeReviewRecord({ cardId: 'c1', logId: 'l1' })
+    await repos.reviews.recordReview(record)
+
+    const first = await importCsv(repos, csvOf(450))
+    expect(first.result).toMatchObject({ new: 450, update: 0, failed: 0, error: null, progressRebuilt: true })
+    expect(await repos.cards.countActive('m1')).toBe(452)
+    expect(await repos.cards.getMaxOrder('m1')).toBe(452)
+    expect(await repos.reviews.getProgress('m1')).toMatchObject({ totalCards: 452, studiedCards: 1 })
+    expect(await repos.reviews.listAllStates('m1')).toEqual([record.state])
+    expect(await repos.reviews.listLogsForCard('m1', 'c1', { limit: 5 })).toEqual([record.log])
+
+    const again = await importCsv(repos, csvOf(450))
+    expect(again.plan.counts).toEqual({ new: 0, update: 0, unchanged: 450, total: 450 })
+
+    const edited = await importCsv(repos, csvOf(450, '（修正）'))
+    expect(edited.result).toMatchObject({ update: 450, failed: 0 })
+    expect((await repos.cards.listAll('m1')).length).toBe(452)
+  })
+})
+

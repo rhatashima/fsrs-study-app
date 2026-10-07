@@ -50,8 +50,8 @@ import {
 
 /** Firestore の `in` クエリで一度に指定できる値の数 */
 const IN_QUERY_LIMIT = 30
-/** 1 回の一括書き込みの上限 */
-const BATCH_LIMIT = 500
+/** 1 回の一括書き込みで書く件数（Firestore の上限 500 件に余裕を残す） */
+const BATCH_LIMIT = 400
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const chunks: T[][] = []
@@ -168,6 +168,21 @@ export function createFirestoreRepositories(
         const snapshot = await timed('cards.count', () => getCountFromServer(query(cardsCol(materialId), where('isArchived', '==', false))), () => 1)
         return snapshot.data().count
       }),
+    getMaxOrder: (materialId) =>
+      guard(async () => {
+        const snapshot = await timed(
+          'cards.maxOrder',
+          () => getDocs(query(cardsCol(materialId), orderBy('order', 'desc'), limitTo(1))),
+          queryDocs,
+        )
+        const top = snapshot.docs[0]
+        return top ? parseCard(materialId, top.id, top.data()).order : 0
+      }),
+    listAll: (materialId) =>
+      guard(async () => {
+        const snapshot = await timed('cards.listAll', () => getDocs(cardsCol(materialId)), queryDocs)
+        return snapshot.docs.map((d) => parseCard(materialId, d.id, d.data()))
+      }),
     saveMany: (newCards) =>
       guard(async () => {
         // すべて検証してから保存する
@@ -260,6 +275,11 @@ export function createFirestoreRepositories(
             return []
           }
         })
+      }),
+    listAllStates: (materialId) =>
+      guard(async () => {
+        const snapshot = await timed('reviewStates.listAll', () => getDocs(statesCol(materialId)), queryDocs)
+        return parseStates(materialId, snapshot.docs)
       }),
     findCardsWithLogs: (materialId, cardIds) =>
       guard(async () => {

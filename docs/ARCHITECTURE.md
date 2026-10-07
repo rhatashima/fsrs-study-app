@@ -55,8 +55,8 @@
 | interface | 主なメソッド | 備考 |
 |---|---|---|
 | `MaterialRepository` | `list` / `get` / `save` | |
-| `CardRepository` | `getByIds` / `listNewCandidates` / `countActive` / `saveMany` | Card だけを扱い、ReviewState / ReviewLog に触れない |
-| `ReviewRepository` | `getStates` / `listDue` / `recordReview` / `listLogsForCard` / `findCardsWithLogs` / `restoreState` / `getProgress` / `replaceProgress` | ReviewState・ReviewLog・集計は 1 回のレビューで同時に更新する必要があるため 1 つにまとめた。**ReviewLog を変更・削除するメソッドは持たない**（追記のみ）。`recordReview` は同じ内容の再送に対して冪等 |
+| `CardRepository` | `getByIds` / `listNewCandidates` / `countActive` / `getMaxOrder` / `listAll` / `saveMany` | Card だけを扱い、ReviewState / ReviewLog に触れない。`saveMany` は 1 回の中身をすべて保存するか何も保存しない（呼び出し側は 400 件以下にする）。`listAll` は全件を読むので、集計の作り直しでだけ使う |
+| `ReviewRepository` | `getStates` / `listDue` / `recordReview` / `listLogsForCard` / `listAllStates` / `findCardsWithLogs` / `restoreState` / `getProgress` / `replaceProgress` | ReviewState・ReviewLog・集計は 1 回のレビューで同時に更新する必要があるため 1 つにまとめた。**ReviewLog を変更・削除するメソッドは持たない**（追記のみ）。`recordReview` は同じ内容の再送に対して冪等 |
 | `SettingsRepository` | `getSettings` / `saveSettings` / `getSchedulerConfig` / `saveSchedulerConfig` | SchedulerConfig は作成のみ |
 
 実装は 2 つ。どちらも `src/repositories/repositoryContract.ts` の**同じ契約テスト**で確認する。
@@ -94,7 +94,7 @@ fsrs-study-app/
 └─ src/
     ├─ main.tsx
     ├─ app/                   ルーター, レイアウト, データ層と時計の Context（repositoryContext, clockContext）, AuthGate（Phase 4）
-    ├─ pages/                 HomePage, StudyPage, MaterialsPage, StatsPage, SettingsPage（ImportPage, LoginPage は後続 Phase）
+    ├─ pages/                 HomePage, StudyPage, MaterialsPage, ImportPage, StatsPage, SettingsPage, LoginPage …
     ├─ components/            共通 UI（TabBar, StudyCard, CardImage, RatingButtons …）
     ├─ hooks/                 useStudySession（学習画面の状態とアクション）…
     ├─ domain/                型定義と純粋関数（material, card, rating, scheduling, review, progress, selection, studyQueue, date, settings, errors）
@@ -108,7 +108,7 @@ fsrs-study-app/
     │   ├─ reviewService.ts   評価 → 新 ReviewState + ReviewLog + 集計用情報（保存はしない）
     │   ├─ studyService.ts    学習セッションの開始・評価の確定・ホームの件数（リポジトリ・FSRS・ドメインの組み合わせ）
     │   ├─ statsService.ts    統計集計（Phase 8）
-    │   ├─ import/            CSV/JSON パース, 検証(zod), 既存カードとの差分計算（Phase 6）
+    │   ├─ import/            教材インポート：parse（CSV/JSON）→ normalize（検証）→ plan（既存カードとの比較）→ execute（400 件ずつ保存・集計の作り直し）
     │   └─ firebase/          Firebase 初期化, Auth（Phase 4）
     ├─ repositories/
     │   ├─ types.ts           リポジトリ interface
@@ -130,7 +130,7 @@ fsrs-study-app/
 | ルーティング | React Router 8（Data Mode：`createBrowserRouter`） | 5画面 + リロード・URL 直接アクセス・戻る/進むに対応。`RouterProvider` は `react-router/dom` から import する。Firebase Hosting では全パスを `index.html` に rewrite する（Phase 5 の `firebase.json`） |
 | FSRS | ts-fsrs **5.4.2**（`--save-exact` で固定。内部アルゴリズムは FSRS-6.0） | 要件。FSRS の計算はすべて ts-fsrs に任せ、アプリ側でアルゴリズムを再実装しない |
 | 検証 | 手書きの小さな検証（`repositories/firestore/validation.ts`） | Firestore の読み込みデータの検証には十分なため、検証ライブラリは追加していない。CSV / JSON インポート（Phase 6）で必要になれば改めて検討する |
-| CSV | papaparse | 引用符・改行入り CSV を正しく扱うため自前実装しない |
+| CSV | papaparse 5.7.0（`--save-exact`）、@types/papaparse | 教材インポート（Phase 6）。カンマ・改行・ダブルクォートを含む項目や BOM を正しく扱うため、自前で分割せず、広く使われ保守されているパーサーを使う |
 | PWA | vite-plugin-pwa | manifest / Service Worker 生成 |
 | テスト | Vitest 5, jsdom, @testing-library/react, @testing-library/user-event | Vite と統合。設定は `vitest.config.ts` |
 | Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5。通常版の `firebase/firestore`）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ。Firestore Lite（`firebase/firestore/lite`）も比較検証したが、ファイルは小さくなる一方で、この環境では読み取りの往復時間が通常版より大きかった（最初の 1 回・2 回目以降とも）ため採用していない（2026-10 の性能調査。「性能に関する設計判断」参照） |

@@ -1,0 +1,49 @@
+.fileLabel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-weight: 700;
+}
+
+.fileLabel input {
+  min-height: var(--tap-target);
+  font-weight: normal;
+}
+
+.counts {
+  border-collapse: collapse;
+  min-width: 12rem;
+}
+
+.counts th {
+  text-align: left;
+  font-weight: normal;
+  padding: var(--space-1) var(--space-6) var(--space-1) 0;
+}
+
+.counts td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.total th,
+.total td {
+  border-top: 1px solid var(--color-border);
+  font-weight: 700;
+}
+
+.issues {
+  margin: 0;
+  padding-left: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.warnings {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--color-text-muted);
+}
+
+.progress {
+  width: 100%;
+}

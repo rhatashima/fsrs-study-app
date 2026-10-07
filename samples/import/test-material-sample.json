@@ -1,0 +1,95 @@
+[
+  {
+    "id": "test-001",
+    "question": "［テスト］1 + 1 は？",
+    "answer": "2",
+    "explanation": "最小限の項目だけを持つカード。",
+    "category": "基本",
+    "tags": []
+  },
+  {
+    "id": "test-002",
+    "question": "［テスト］額縁の中で、青い図形はどんな形？",
+    "answer": "円",
+    "explanation": "この画像は開発用に作成した抽象図形です。",
+    "category": "画像",
+    "tags": [
+      "画像"
+    ],
+    "examDifficulty": 1,
+    "importance": 3,
+    "imageUrl": "/images/samples/framed-shapes.svg",
+    "source": "開発用ダミーデータ"
+  },
+  {
+    "id": "test-101",
+    "question": "［テスト］JSON の新規カード",
+    "answer": "答え",
+    "category": "基本",
+    "tags": [
+      "JSON",
+      "新規"
+    ],
+    "examDifficulty": 2,
+    "importance": 4
+  },
+  {
+    "id": "test-102",
+    "question": "［テスト］互換用の difficulty を使うカード",
+    "answer": "examDifficulty として取り込まれる",
+    "category": "基本",
+    "tags": "互換;difficulty",
+    "difficulty": 3
+  },
+  {
+    "id": "test-103",
+    "question": "［テスト］改行を含む解説",
+    "answer": "答え",
+    "explanation": "1 行目\n2 行目",
+    "category": "表示確認",
+    "tags": []
+  },
+  {
+    "id": "test-104",
+    "question": "［テスト］カンマ, と \"引用符\" を含む問題",
+    "answer": "答え",
+    "category": "表示確認",
+    "tags": [
+      "記号"
+    ]
+  },
+  {
+    "id": "test-105",
+    "question": "［テスト］materialId を含むカード",
+    "answer": "選んだ教材と同じなら取り込める",
+    "category": "基本",
+    "tags": [],
+    "materialId": "sample-test"
+  },
+  {
+    "id": "test-106",
+    "question": "［テスト］並び順を指定",
+    "answer": "order 50",
+    "category": "基本",
+    "tags": [],
+    "order": 50
+  },
+  {
+    "id": "test-107",
+    "question": "［テスト］新規 7",
+    "answer": "7",
+    "category": "基本",
+    "tags": [
+      "新規"
+    ]
+  },
+  {
+    "id": "test-108",
+    "question": "［テスト］新規 8",
+    "answer": "8",
+    "category": "基本",
+    "tags": [
+      "新規"
+    ]
+  }
+]
