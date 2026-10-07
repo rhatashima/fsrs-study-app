@@ -67,7 +67,7 @@
 - **利用者の作業**：Firebase プロジェクト作成、Web アプリ登録、Google ログイン有効化、`.env.local` の設定（README の手順）。
 - 注意：`npm audit` が firebase 内の `@grpc/grpc-js`（Firestore の Node.js 用通信部分）について high を報告する。ブラウザ版では使われない部分で、提示される修正は firebase 9 への格下げ（破壊的変更）のため適用しない。firebase の更新時に再確認する。
 
-### Phase 5：Firestore 同期・Security Rules・初回 Hosting（branch: `feature/firestore-sync`）実装済み・デプロイ待ち
+### Phase 5：Firestore 同期・Security Rules・初回 Hosting（branch: `feature/firestore-sync`）✅
 - Firestore（Standard edition、`(default)`、`asia-northeast1`）は利用者が作成済み。リージョン・データベースは変更しない。
 - `src/repositories/firestore/`：Repository interface の Firestore 実装、Date ↔ Timestamp 変換、読み込みデータの検証（手書き）、エラーの日本語化。レビュー保存はトランザクション（ReviewLog の id による二重登録防止・別端末との競合検出）。
 - メモリ実装と Firestore 実装を同じ契約テスト（`repositoryContract.ts`）で確認。
@@ -76,14 +76,15 @@
 - `firestore.rules.template`・`tests/rules/`（Emulator）・`firestore.indexes.json`・`firebase.json`（Hosting：`dist/`、SPA の rewrite、キャッシュ設定）・`scripts/firebase-prepare.mjs`。
 - 開発用のダミーデータ投入（開発サーバーの設定画面だけに表示。本番ビルドには含まれない）。
 - `npm audit`：firebase-tools（開発用ツール）由来の moderate / high が増える。アプリには含まれない。firebase 本体の `@grpc/grpc-js` は Phase 4 の記載どおり。
-- **残り：本番デプロイ（利用者の承認後）と実機確認**（README の「デプロイ」「デプロイ後の確認」）。
+- 本番デプロイ・PC / スマートフォンでの実機確認・Firestore の整合性確認まで完了（2026-10-06）。
 
-### 性能改善（branch: `feature/performance`）
+### Phase 5.1：性能改善（branch: `feature/performance`）✅
 - 計測：開発時・オプトインの計測ログ（`src/lib/perf.ts`）。
 - 学習データの読み込みを依存関係ごとの段にまとめて並列化（学習開始 7 段 → 4 段、ホームのデータ再利用時 2 段。ホーム 3 段 → 2 段）。重複していた設定・教材の読み取りを削除。
 - Firestore Lite は比較検証したが、この環境では通常版より読み取りの往復時間が大きかったため採用しない（ARCHITECTURE.md「性能に関する設計判断」）。
 - 評価の保存は single-flight optimistic navigation（案 D）：トランザクションの完了を待たずに次の問題を表示するが、保存待ちは最大 1 件で、前の回答の保存が終わるまで次の評価はできない。
 - 未着手：ホーム表示後の学習データの先読み（案 C。現時点では不要と判断）。
+- 本番デプロイ（Hosting）・実機確認・Firestore の整合性確認まで完了（2026-10-07）。
 
 ### Phase 6：CSV / JSON インポート（branch: `feature/import`）
 - `services/import/`（papaparse, zod 検証, 差分分類）とインポート画面（プレビュー → 更新/スキップ選択 → 確定）。
