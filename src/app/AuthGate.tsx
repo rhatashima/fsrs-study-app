@@ -5,6 +5,7 @@ import type { AppUser } from '../services/auth/types'
 import styles from '../pages/Page.module.css'
 import { useAuth } from './authContext'
 import { RepositoryContext, RepositoryFactoryContext, type RepositoryFactory } from './repositoryContext'
+import { StudyBasicsHandoff, StudyHandoffContext } from './studyHandoffContext'
 
 /**
  * Owner としてログインしているときだけ children（アプリの画面）を表示する。
@@ -38,5 +39,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
 function UserScope({ user, factory, children }: { user: AppUser; factory: RepositoryFactory; children: ReactNode }) {
   const [repositories] = useState(() => factory(user))
-  return <RepositoryContext value={repositories}>{children}</RepositoryContext>
+  const [handoff] = useState(() => new StudyBasicsHandoff())
+  return (
+    <RepositoryContext value={repositories}>
+      <StudyHandoffContext value={handoff}>{children}</StudyHandoffContext>
+    </RepositoryContext>
+  )
 }

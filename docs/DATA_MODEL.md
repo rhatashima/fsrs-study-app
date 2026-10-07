@@ -219,8 +219,9 @@ FSRS パラメータは全教材共通。新規カード数のみ教材ごと。
 
 | 場面 | クエリ | 読み取り数の目安 |
 |---|---|---|
-| 起動 | `settings/app`、教材一覧 | 1 + 教材数 |
-| ホーム | `progress/summary` 1 件 + `reviewStates where suspended == false && due < 学習日の終わり`（Review / 学習中を区別して数えるため状態を取得） | 1 + 今日の期限カード数 |
+| 起動・ホーム（段 1） | `settings/app` ∥ 教材一覧（同時に読む） | 1 + 教材数 |
+| ホーム（段 2） | `progress/summary` 1 件 ∥ `reviewStates where suspended == false && due < 学習日の終わり`（Review / 学習中を区別して数えるため状態を取得） | 1 + 今日の期限カード数 |
+| 学習開始 | ホームから 60 秒以内なら段 1〜2 を再利用し、以下の段 3〜4 だけを読む（ARCHITECTURE.md「読み込みの段」） | — |
 | 学習開始：復習・学習中 | `reviewStates where suspended == false && due < 学習日の終わり orderBy due`（Review の 1 日の上限なし）、対応する Card を id で取得（`in` 最大 30 件ずつ） | 期限カード数 × 2 |
 | 学習開始：新規 | `cards where isArchived == false && order > newCursorOrder orderBy order limit (残り新規数)`、念のため対応 ReviewState の有無を id で確認 | 新規数 × 2 程度 |
 | 1 レビュー保存 | トランザクション：ReviewLog・ReviewState・集計を読み、整合性を確かめてから 3 つを書く | 読み取り 3 + 書き込み 3（Rules の `existsAfter` で読み取り +1） |

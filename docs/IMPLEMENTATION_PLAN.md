@@ -78,6 +78,12 @@
 - `npm audit`：firebase-tools（開発用ツール）由来の moderate / high が増える。アプリには含まれない。firebase 本体の `@grpc/grpc-js` は Phase 4 の記載どおり。
 - **残り：本番デプロイ（利用者の承認後）と実機確認**（README の「デプロイ」「デプロイ後の確認」）。
 
+### 性能改善（branch: `feature/performance`）
+- 計測：開発時・オプトインの計測ログ（`src/lib/perf.ts`）。
+- 学習データの読み込みを依存関係ごとの段にまとめて並列化（学習開始 7 段 → 4 段、ホームのデータ再利用時 2 段。ホーム 3 段 → 2 段）。重複していた設定・教材の読み取りを削除。
+- Firestore Lite は計測で読み取りが遅かったため採用しない（ARCHITECTURE.md の採用ライブラリの表）。
+- 未着手（再計測の結果で判断）：ホーム表示後の学習データの先読み（案 C）、評価後すぐ次のカードを表示する非同期保存（案 D）。
+
 ### Phase 6：CSV / JSON インポート（branch: `feature/import`）
 - `services/import/`（papaparse, zod 検証, 差分分類）とインポート画面（プレビュー → 更新/スキップ選択 → 確定）。
 - テスト：CSV/JSON パース、BOM、必須欠落、不正な数値、ファイル内重複、新規/更新/変更なし分類、更新時に ReviewState / ReviewLog が保持されること。

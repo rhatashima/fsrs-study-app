@@ -133,7 +133,7 @@ fsrs-study-app/
 | CSV | papaparse | 引用符・改行入り CSV を正しく扱うため自前実装しない |
 | PWA | vite-plugin-pwa | manifest / Service Worker 生成 |
 | テスト | Vitest 5, jsdom, @testing-library/react, @testing-library/user-event | Vite と統合。設定は `vitest.config.ts` |
-| Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ |
+| Firebase | firebase（JavaScript SDK）12.19.0（`--save-exact`） | Authentication（Phase 4）、Firestore（Phase 5。通常版の `firebase/firestore`）。SDK を import するのは `src/services/firebase/` と `src/repositories/firestore/` だけ。Firestore Lite（`firebase/firestore/lite`）はファイルが約 350 KB 小さくなるが、計測で読み取りが遅かった（最初の 1 回 約 0.9 秒 対 0.4 秒、以降の平均 約 0.43 秒 対 0.22 秒）ため採用していない（2026-10 の性能調査） |
 | Firebase CLI | firebase-tools 15.32.1（devDependency、`--save-exact`） | Emulator での Rules テスト、デプロイ |
 | Rules テスト | @firebase/rules-unit-testing 5.0.2 + Firestore Emulator | Java（21 以上を推奨）が必要なため `npm test` とは別コマンド（`npm run test:rules`） |
 | Lint | ESLint 10 (flat config) + typescript-eslint（型情報を使う推奨ルール） | `no-restricted-imports` でレイヤー間の import を制限。制限が働くことは `tests/architecture/import-boundaries.test.ts` で確認 |
@@ -225,6 +225,23 @@ loadStudyOverview(repos, materialId, now): { material, counts }   // ホーム�
 - 件数は `reviewDueToday`・`learningDueNow`・`newAvailable`（と `learningLater`・`nextLearningDueAt`）を区別して返す（`StudyCounts`）。
 - **学習日**：区切りは `AppSettings.dayStartHour`（初期値 4:00）。2026-10-06 03:00 は 10/5 の学習日、04:01 は 10/6 の学習日。「現在の学習日の終わり」は次の区切り時刻（`studyDayEnd`。例：10/6 10:00 → 10/7 04:00）。
 - 読み込むのは「今日の学習日の終わりより前が期限の ReviewState」（`listDue({ dueBefore })`）と、今日の新規分のカードだけ（全件読み込みはしない）。
+
+### 読み込みの段（`services/studyService.ts`）
+
+Firestore の 1 往復は約 0.2 秒かかるため、依存関係のない読み取りは同時に行い、順番待ち（段）を減らす。
+
+| 段 | 同時に読むもの | 依存しているもの |
+|---|---|---|
+| 1 | 設定 ∥ 教材一覧 | なし |
+| 2 | 集計 ∥ 期限カードの学習状態 | 教材・設定（学習日の終わり） |
+| 3 | 期限カードの本文 ∥ 新規候補 ∥ FSRS 設定の記録（変わったときだけ書き込み） | 期限カードの結果・集計の新規カーソル |
+| 4 | 新規候補の学習状態 ∥ 新規候補の学習履歴の有無 | 新規候補 |
+
+- ホーム画面は段 1〜2（`loadStudyBasics`）だけを読み、件数は通信せずに計算する（`overviewOf`）。
+- 「学習を始める」を押したとき、ホームで 60 秒以内に読んだ段 1〜2 のデータがあれば再利用し、段 3〜4 だけを読む（`StudyBasicsHandoff`。1 回取り出したら消える。利用者ごとに作り、ログアウトで捨てる。学習日が変わったものは使わない）。永続的なキャッシュではない。
+- 再利用したデータが他の端末の学習で古くなっていても、保存時のトランザクションが保存済みの状態と照合するため、データは壊れない。
+- 段の数と呼び出し回数は `services/studyLoading.test.ts` で確認している（ホーム 2 段、学習開始 4 段・再利用時 2 段）。
+- 学習中の次のカードは端末内で選ぶ（Firestore に問い合わせない）。
 - セッション上限（「今回は 20 枚だけ」など）は未実装。追加する場合は `nextStudyItem` の手前で枚数を数えればよい。
 
 ## 5. 同期・保存方針

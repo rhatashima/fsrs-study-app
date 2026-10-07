@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useClock } from '../app/clockContext'
 import { useRepositories } from '../app/repositoryContext'
+import { useStudyHandoff } from '../app/studyHandoffContext'
 import { isCorruptedReviewStateError } from '../domain'
 import { errorMessage } from '../lib/errorMessage'
 import { perfAsync, perfBegin, perfMark } from '../lib/perf'
 import { formatInterval } from '../lib/formatInterval'
-import { loadStudyOverview, selectCurrentMaterial, type StudyOverview } from '../services/studyService'
+import { loadStudyBasics, overviewOf, type StudyOverview } from '../services/studyService'
 import styles from './Page.module.css'
 import homeStyles from './HomePage.module.css'
 
@@ -19,6 +20,7 @@ type LoadState =
 export function HomePage() {
   const repos = useRepositories()
   const clock = useClock()
+  const handoff = useStudyHandoff()
   const [state, setState] = useState<LoadState>({ status: 'loading' })
 
   useEffect(() => {
@@ -26,15 +28,17 @@ export function HomePage() {
     void (async () => {
       try {
         perfMark('home:load-start')
-        const material = await perfAsync('home:selectCurrentMaterial', () => selectCurrentMaterial(repos))
-        if (!material) {
-          if (!cancelled) setState({ status: 'no-material' })
+        const now = clock()
+        const basics = await perfAsync('home:loadStudyBasics', () => loadStudyBasics(repos, now))
+        perfMark('home:data-loaded')
+        if (cancelled) return
+        if (!basics) {
+          setState({ status: 'no-material' })
           return
         }
-        const now = clock()
-        const overview = await perfAsync('home:loadStudyOverview', () => loadStudyOverview(repos, material.id, now))
-        perfMark('home:data-loaded')
-        if (!cancelled) setState({ status: 'loaded', overview, now })
+        // 直後に「学習を始める」を押したときに再利用できるよう渡しておく
+        handoff.put(basics)
+        setState({ status: 'loaded', overview: overviewOf(basics, now), now })
       } catch (error) {
         if (!cancelled) {
           setState({
@@ -48,7 +52,7 @@ export function HomePage() {
     return () => {
       cancelled = true
     }
-  }, [repos, clock])
+  }, [repos, clock, handoff])
 
   return (
     <section className={styles.page}>

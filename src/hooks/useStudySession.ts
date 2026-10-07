@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useClock } from '../app/clockContext'
 import { useRepositories } from '../app/repositoryContext'
+import { useStudyHandoff } from '../app/studyHandoffContext'
 import {
   answeredCount,
   isCorruptedReviewStateError,
@@ -23,9 +24,9 @@ import type { ReviewRecord } from '../repositories/types'
 import { restoreReviewStates } from '../services/restoreService'
 import {
   buildReview,
+  loadStudyBasics,
   saveReview,
-  selectCurrentMaterial,
-  startStudySession,
+  startStudySessionFrom,
   type StudyContext,
 } from '../services/studyService'
 
@@ -127,6 +128,7 @@ function advance(session: StudySession, now: Date) {
 export function useStudySession() {
   const repos = useRepositories()
   const clock = useClock()
+  const handoff = useStudyHandoff()
   const [state, setState] = useState<InternalState>({ status: 'loading' })
   /** 再読み込みのきっかけ（復元の後など） */
   const [loadCount, setLoadCount] = useState(0)
@@ -151,14 +153,19 @@ export function useStudySession() {
     let cancelled = false
     void (async () => {
       try {
-        const material = await perfAsync('study:selectCurrentMaterial', () => selectCurrentMaterial(repos))
-        if (!material) {
+        const now = clock()
+        // ホーム画面で直前に読んだ基本データがあれば再利用する（なければ読み込む）
+        const reused = handoff.take(now)
+        const basics =
+          reused ?? (await perfAsync('study:loadStudyBasics', () => loadStudyBasics(repos, now)))
+        if (!basics) {
           if (!cancelled) setState({ status: 'no-material' })
           return
         }
-        const now = clock()
-        const { context, session } = await perfAsync('study:startStudySession', () =>
-          startStudySession(repos, material.id, now),
+        const { context, session } = await perfAsync(
+          'study:startStudySession',
+          () => startStudySessionFrom(repos, basics, now),
+          () => ({ reusedHomeData: reused !== null }),
         )
         if (!cancelled) setState({ status: 'ready', context, ...advance(session, now) })
       } catch (error) {
@@ -168,7 +175,7 @@ export function useStudySession() {
     return () => {
       cancelled = true
     }
-  }, [repos, clock, toFailure, loadCount])
+  }, [repos, clock, handoff, toFailure, loadCount])
 
   const computePreview = useCallback((item: CurrentItem, context: StudyContext): Preview => {
     const now = clock()

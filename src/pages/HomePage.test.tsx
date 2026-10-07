@@ -1,4 +1,5 @@
 import { screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { createSampleRepositories } from '../dev/sampleRepositories'
 import { createMemoryRepositories } from '../repositories/memory/createMemoryRepositories'
@@ -41,4 +42,35 @@ describe('ホーム画面', () => {
     const newCount = within(screen.getByText('新規').parentElement as HTMLElement).getByRole('definition')
     expect(newCount).toHaveTextContent('10')
   })
+
+  it('「学習を始める」では、ホームで読んだ設定・教材・集計・期限カードを読み直さない', async () => {
+    const repos = createSampleRepositories()
+    const counts: Record<string, number> = {}
+    const count = <T extends object>(group: string, target: T) => {
+      for (const key of Object.keys(target) as (keyof T)[]) {
+        const original = target[key]
+        if (typeof original !== 'function') continue
+        target[key] = ((...args: unknown[]) => {
+          counts[`${group}.${String(key)}`] = (counts[`${group}.${String(key)}`] ?? 0) + 1
+          return (original as (...a: unknown[]) => unknown).apply(target, args)
+        }) as T[keyof T]
+      }
+    }
+    count('settings', repos.settings)
+    count('materials', repos.materials)
+    count('reviews', repos.reviews)
+    count('cards', repos.cards)
+    const user = userEvent.setup()
+    renderApp({ repos, clock: createTestClock(NOW).now, path: '/' })
+    await screen.findByText('日本城郭検定3級')
+    const afterHome = { ...counts }
+
+    await user.click(screen.getByRole('link', { name: '学習を始める' }))
+    expect(await screen.findByText('城の中心となる曲輪を何という？')).toBeInTheDocument()
+    for (const key of ['settings.getSettings', 'materials.list', 'reviews.getProgress', 'reviews.listDue']) {
+      expect(counts[key], key).toBe(afterHome[key])
+    }
+    expect(counts['cards.listNewCandidates']).toBe(1)
+  })
 })
+
